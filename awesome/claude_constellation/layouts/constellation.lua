@@ -1,5 +1,6 @@
 -- Constellation: sessions on an ellipse, drifting slowly, the resources they touch orbiting
--- around them, and a bowed link between sessions sharing a resource.
+-- around them, their subagents running around them, and a bowed link between sessions sharing
+-- a resource.
 
 -- A bowed line between two linked sessions, a glow travelling along it, and the shared
 -- resource names at its middle (just the kind when private).
@@ -88,6 +89,7 @@ return function(K, cr, w, h, f)
       end
     end
 
+    K.runners(cr, s, f) -- subagents, as mini Clawds circling the session
     K.node(cr, s, i, s.x, s.y, f, 64)
     K.text(cr, K.name(s), s.x, s.y - 52, 14, C.fg, 0.9 * A, true)
     K.text(cr, K.sub(s, f.private), s.x, s.y + 62, 11, K.node_color(s), 0.8 * A, true)

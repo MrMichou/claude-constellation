@@ -6,7 +6,7 @@ import path from "node:path";
 import { tmpHome, runNode, readJson, exists, INSTALL, TRACK, ROOT } from "./helpers.js";
 
 const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
-  "PermissionRequest", "Stop", "SessionEnd"];
+  "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 
 describe("install.js", () => {
   let h;
@@ -35,6 +35,9 @@ describe("install.js", () => {
     expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js end$/);
     expect(hooks.PreToolUse.at(-1).matcher).toBe("*");
     expect(hooks.Stop.at(-1).matcher).toBeUndefined();
+    expect(ours(hooks.SubagentStart)[0].command).toMatch(/track\.js substart$/);
+    expect(ours(hooks.SubagentStop)[0].command).toMatch(/track\.js substop$/);
+    expect(hooks.SubagentStop.at(-1).matcher).toBe("*");
   });
 
   it("keeps other settings and hooks, and backs up the original", async () => {
@@ -48,6 +51,19 @@ describe("install.js", () => {
     expect(s.model).toBe("opus");
     expect(s.hooks.Stop.flatMap((e) => e.hooks).map((x) => x.command)).toContain("other-tool stop");
     expect(readJson(h.settings + ".bak-constellation")).toEqual(original);
+  });
+
+  it("replaces hooks left by another checkout of claude-constellation", async () => {
+    writeSettings({ hooks: { PreToolUse: [
+      { matcher: "*", hooks: [{ type: "command", command: "/usr/bin/node /old/claude-constellation/hooks/track.js pre" }] },
+      { matcher: "*", hooks: [{ type: "command", command: "node /x/claude-constellation-wt/hooks/track.js pre" }] },
+      { matcher: "*", hooks: [{ type: "command", command: "node /other/project/hooks/track.js pre" }] },
+    ] } });
+    await install();
+    const cmds = readJson(h.settings).hooks.PreToolUse.flatMap((e) => e.hooks.map((x) => x.command));
+    expect(cmds.filter((c) => c.includes("/old/") || c.includes("-wt/"))).toEqual([]);
+    expect(cmds).toContain("node /other/project/hooks/track.js pre");
+    expect(cmds.filter((c) => c.includes(TRACK))).toHaveLength(1);
   });
 
   it("is idempotent", async () => {
