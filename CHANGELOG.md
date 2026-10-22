@@ -16,3 +16,13 @@ All notable changes to claude-constellation are documented here. This project fo
 - **README demos** rendered offline by the real renderer (`demo/record.sh`).
 - **Tests and CI**: vitest suites for the hook and installer, busted specs for the renderer and saver, luacheck, and a GitHub Actions workflow (Node 18/20/22, Lua 5.4 in an Arch container).
 - **Release tooling**: `make release` cuts the changelog, bumps the version and tags; pushing the tag publishes a GitHub release with these notes and a slim tarball.
+- **Layouts.** The same sessions can be drawn nine ways: constellation (default), lanes (tool calls over the last 20 minutes), cards, resources (shared files and tmux sessions in the middle), and kanban, radar, strip, hud and popup, which put the session that needs you first. Nodes glide between layouts; every layout hides paths and commands on the lock screen.
+- **`constellation-layout [next|prev|<layout>]`** switches layouts in the running Awesome (linked into `~/.local/bin` by the installer), as does `set_layout()` from a key binding; the choice is remembered and used by the lock screen.
+- **Tool-call timeline** in the session files (30 minutes), used by the lanes, radar and strip layouts.
+- **Idle and already-running sessions show up**: the hook runs from `SessionStart`, and sessions with no hook file yet are read from Claude Code's registry (`~/.claude/sessions`).
+
+### Changed
+- **Cheaper frames**: glows are cached surfaces, label widths are memoised, satellites and links are computed once per reload, and session files are only parsed when they change (~13.5 → ~5.3 ms per 1920×1080 frame). The animation timer stops while no session is shown or the layer is hidden.
+
+### Fixed
+- **Lock-screen saver** runs under whichever Lua can load lgi (lua5.4, lua5.3, lua5.5, lua, luajit, lua5.1), instead of dying when lgi is only installed for Lua 5.3; the layouts stay compatible with Lua 5.1/LuaJIT.

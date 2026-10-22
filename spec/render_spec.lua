@@ -378,8 +378,24 @@ describe("render.lua", function()
       R.read_sessions()
     end)
 
-    it("lists the four layouts, constellation first", function()
-      assert.are.same({ "constellation", "lanes", "cards", "resources" }, R.LAYOUTS)
+    it("lists the layouts, constellation first", function()
+      assert.are.same({ "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud",
+        "popup" }, R.LAYOUTS)
+    end)
+
+    it("kanban, strip, hud and popup put the session that needs you first", function()
+      for _, layout in ipairs({ "kanban", "strip", "hud", "popup" }) do
+        local texts = draw({ layout = layout }).texts
+        local first_name
+        for _, t in ipairs(texts) do
+          if t == "api" or t == "infra" or t == "docs" or t == "dots" then first_name = t; break end
+        end
+        assert.are.equal("infra", first_name, layout)
+      end
+    end)
+
+    it("radar centres the most urgent session", function()
+      assert.is_true(draw({ layout = "radar" }).has_text("infra needs you"))
     end)
 
     it("draws every layout, animated or static and private", function()
