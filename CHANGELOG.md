@@ -19,6 +19,7 @@ All notable changes to claude-constellation are documented here. This project fo
 - **Layouts.** The same sessions can be drawn nine ways: constellation (default), lanes (tool calls over the last 20 minutes), cards, resources (shared files and tmux sessions in the middle), and kanban, radar, strip, hud and popup, which put the session that needs you first. Nodes glide between layouts; every layout hides paths and commands on the lock screen.
 - **`constellation-layout [next|prev|<layout>]`** switches layouts in the running Awesome (linked into `~/.local/bin` by the installer), as does `set_layout()` from a key binding; the choice is remembered and used by the lock screen.
 - **Tool-call timeline** in the session files (30 minutes), used by the lanes, radar and strip layouts.
+- **GPU or CPU rendering, GPU first.** With `auto` (default) the layer draws on the GPU when a graphics driver is bound to a DRM card, straight onto the X surface with glows and sprites kept as X pixmaps (6 sessions at 1920×1080 on an NVIDIA GTX 1650 Ti: constellation 10.5 → 4.1 ms per frame, 3.4 → 2.6 ms on average over the nine layouts); otherwise, or after a failed GPU frame, it draws into an in-memory image and copies it once. Rechecked every second; `set_backend("auto"|"gpu"|"cpu")` forces one, remembered and shared with the lock screen.
 - **Idle and already-running sessions show up**: the hook runs from `SessionStart`, and sessions with no hook file yet are read from Claude Code's registry (`~/.claude/sessions`).
 
 ### Changed
