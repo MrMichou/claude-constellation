@@ -115,6 +115,7 @@ function json.decode(str)
   local ok, val, idx = pcall(decode_value, str, 1)
   if not ok then return nil, "decode error" end
   if idx == nil then return nil, val end -- val holds the error message
+  if type(idx) ~= "number" then return nil, idx end -- (nil, message) from decode_value
   return val
 end
 

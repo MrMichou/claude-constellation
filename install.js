@@ -26,8 +26,14 @@ const EVENTS = {
 };
 const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest"]);
 
-const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-fs.copyFileSync(settingsPath, settingsPath + ".bak-constellation");
+// A fresh machine may have no settings.json yet: start from {} (and keep a backup otherwise).
+let settings = {};
+if (fs.existsSync(settingsPath)) {
+  settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+  fs.copyFileSync(settingsPath, settingsPath + ".bak-constellation");
+} else {
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+}
 settings.hooks = settings.hooks || {};
 
 for (const [evt, arg] of Object.entries(EVENTS)) {

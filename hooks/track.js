@@ -9,7 +9,6 @@ const os = require("os");
 const path = require("path");
 
 const dir = path.join(os.homedir(), ".claude", "constellation");
-const event = process.argv[2] || "";
 const HISTORY_MAX = 10;
 const LINKS_MAX = 20; // shared-resource keys kept per session
 const LINK_TTL = 3600; // seconds a shared resource stays linkable
@@ -91,13 +90,7 @@ function linkKeys(t, input) {
   return [];
 }
 
-let raw = "";
-process.stdin.on("data", (d) => (raw += d));
-process.stdin.on("end", () => {
-  try { run(JSON.parse(raw || "{}")); } catch {}
-});
-
-function run(p) {
+function run(event, p) {
   const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
   if (!sid) return;
   const file = path.join(dir, sid + ".json");
@@ -153,4 +146,15 @@ function run(p) {
   const tmp = file + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(s));
   fs.renameSync(tmp, file);
+}
+
+if (require.main === module) {
+  const event = process.argv[2] || "";
+  let raw = "";
+  process.stdin.on("data", (d) => (raw += d));
+  process.stdin.on("end", () => {
+    try { run(event, JSON.parse(raw || "{}")); } catch {}
+  });
+} else {
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys };
 }

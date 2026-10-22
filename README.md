@@ -46,3 +46,27 @@ To uninstall: `node install.js --uninstall`, then remove the line added to `rc.l
 ## Demos
 
 The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
+
+## Tests
+
+```sh
+npm ci && make test   # = npm test + luacheck + Lua specs
+make test-docker      # luacheck + Lua specs in the CI's Arch container (no local busted/luacheck needed)
+```
+
+- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` and `install.js` against a throwaway `$HOME`.
+- `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading, battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links and the battery freeze, asserted through a recording cairo context, plus a real cairo frame and sprite-asset checks; `saver.lua` refuses to run without a window.
+- The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.
+
+## Releasing
+
+Changes go under `## [Unreleased]` in `CHANGELOG.md` as they land. Then, on a clean `main`:
+
+```sh
+make release V=minor DRY=1          # preview the version and notes
+make release V=minor                # or patch / major / X.Y.Z
+git push origin main --follow-tags
+```
+
+`scripts/release.js` runs `npm test`, moves the [Unreleased] entries under `## [X.Y.Z] - date`, bumps `package.json`, commits `chore: release X.Y.Z` and tags `vX.Y.Z`. The pushed tag triggers `.github/workflows/release.yml`: it re-runs CI, checks the tag against `package.json`, and publishes a GitHub release whose notes are that changelog section plus a compare link, with a `claude-constellation-X.Y.Z.tar.gz` that leaves out tests, demos and GIFs (`.gitattributes`).

@@ -11,7 +11,6 @@ local Gio = lgi.Gio
 local DIR = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 local json = dofile(DIR .. "json.lua")
 
-local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
 local FRAMES_DIR = DIR .. "frames/"
 local STALE_AFTER = 10 * 60 -- seconds without activity -> dimmed
 local HIDE_AFTER = 3 * 3600 -- seconds without activity -> hidden (crashed session)
@@ -35,6 +34,14 @@ local CLAWD = {
 }
 
 local R = { FPS_ACTIVE = 30, FPS_IDLE = 8 }
+
+-- Where session files and power supplies are read from; overridable for tests.
+local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
+local PS_DIR = "/sys/class/power_supply/"
+function R.set_dirs(data_dir, power_dir)
+  DATA_DIR = data_dir or DATA_DIR
+  PS_DIR = power_dir or PS_DIR
+end
 
 -- "#rgb", "#rrggbb" or "#rrggbbaa" -> {r, g, b} in 0..1; nil if unparsable.
 local function rgb(hex)
@@ -93,9 +100,9 @@ if type(manifest) ~= "table" then manifest = {} end
 -- Strips are decoded lazily and memoised; {} when a set is missing (falls back to a dot).
 local sprite_cache = {}
 local function sprite_set(name)
-  local set = sprite_cache[name]
-  if set then return set end
-  set = {}
+  local cells = sprite_cache[name]
+  if cells then return cells end
+  cells = {}
   local n = math.floor(tonumber(manifest[name]) or 0)
   local ok, sheet = pcall(cairo.ImageSurface.create_from_png, FRAMES_DIR .. name .. ".png")
   if n > 0 and ok and sheet and sheet.status == "SUCCESS" then
@@ -105,12 +112,12 @@ local function sprite_set(name)
       local c = cairo.Context(cell)
       c:set_source_surface(sheet, -i * w, 0)
       c:paint()
-      set[#set + 1] = cell
+      cells[#cells + 1] = cell
     end
     sheet:finish()
   end
-  sprite_cache[name] = set
-  return set
+  sprite_cache[name] = cells
+  return cells
 end
 
 -- sessions[sid] = decoded state file + layout fields (x, y, alpha)
@@ -157,7 +164,6 @@ end
 
 -- On battery = the system battery is discharging (peripheral batteries have scope "Device").
 -- Machines without a battery are always on mains.
-local PS_DIR = "/sys/class/power_supply/"
 local function read_line(path)
   local f = io.open(path, "r")
   if not f then return nil end
@@ -210,8 +216,8 @@ local function emote(s, t, stale)
   return CLAWD.rest, false
 end
 
-local function draw_sprite(cr, set, idx, x, y, a)
-  local cell = set[(idx % #set) + 1]
+local function draw_sprite(cr, cells, idx, x, y, a)
+  local cell = cells[(idx % #cells) + 1]
   local w, h = cell:get_width(), cell:get_height()
   local k = SPRITE_SIZE / math.max(w, h)
   cr:save()
@@ -369,14 +375,14 @@ function R.draw(cr, w, h, opts)
 
       glow(cr, sx, sy, 9, kc, 0.8 * fade * A)
       set(cr, kc, fade * A); cr:arc(sx, sy, 2.2, 0, 2 * math.pi); cr:fill()
-      local right = math.cos(sa) >= 0
-      if private then -- dot only, no path/command label
-      elseif right then
-        text(cr, sat.target or "", sx + 8, sy + 4, 11, C.dim, 0.75 * fade * A)
-      else
-        cr:set_font_size(11)
-        local ext = cr:text_extents(sat.target or "")
-        text(cr, sat.target or "", sx - 8 - ext.width, sy + 4, 11, C.dim, 0.75 * fade * A)
+      if not private then -- private: dot only, no path/command label
+        local label = sat.target or ""
+        local lx = sx + 8
+        if math.cos(sa) < 0 then -- left half: right-align the label against the dot
+          cr:set_font_size(11)
+          lx = sx - 8 - cr:text_extents(label).width
+        end
+        text(cr, label, lx, sy + 4, 11, C.dim, 0.75 * fade * A)
       end
 
       -- Pulse travelling along the link right after the call.

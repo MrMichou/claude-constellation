@@ -1,0 +1,12 @@
+{
+  "name": "claude-constellation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tests for the Claude Code hook and installer of claude-constellation.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}
