@@ -46,3 +46,14 @@ To uninstall: `node install.js --uninstall`, then remove the line added to `rc.l
 ## Demos
 
 The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
+
+## Tests
+
+```sh
+npm ci && make test   # = npm test + luacheck + Lua specs
+```
+
+- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` and `install.js` against a throwaway `$HOME`.
+- `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading, battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links and the battery freeze, asserted through a recording cairo context, plus a real cairo frame and sprite-asset checks; `saver.lua` refuses to run without a window.
+- The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.

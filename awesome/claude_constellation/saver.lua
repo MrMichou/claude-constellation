@@ -4,6 +4,12 @@
 -- and hands over the window to draw into in $XSCREENSAVER_WINDOW. The saver has no say in
 -- authentication: if it crashes, the screen just stays locked (blank).
 
+local xid = tonumber(os.getenv("XSCREENSAVER_WINDOW") or "")
+if not xid then
+  io.stderr:write("claude-constellation-saver: XSCREENSAVER_WINDOW is not set\n")
+  os.exit(1)
+end
+
 local DIR = (arg and arg[0] or ""):match("^(.*/)") or "./"
 local lgi = require("lgi")
 local GLib, cairo = lgi.GLib, lgi.cairo
@@ -16,11 +22,6 @@ local R = dofile(DIR .. "render.lua")
 R.set_palette(R.read_json((os.getenv("XDG_CACHE_HOME") or (os.getenv("HOME") .. "/.cache"))
   .. "/claude-constellation/theme.json"))
 
-local xid = tonumber(os.getenv("XSCREENSAVER_WINDOW") or "")
-if not xid then
-  io.stderr:write("claude-constellation-saver: XSCREENSAVER_WINDOW is not set\n")
-  os.exit(1)
-end
 Gtk.init()
 local display = Gdk.Display.get_default()
 local win = GdkX11.X11Window.foreign_new_for_display(display, xid)

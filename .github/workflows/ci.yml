@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  js:
+    name: Hook + installer (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  lint:
+    name: Lua lint (luacheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 luarocks
+          sudo luarocks install luacheck
+      - run: luacheck awesome/ spec/
+
+  lua:
+    name: Renderer + saver (Lua 5.4, busted)
+    runs-on: ubuntu-latest
+    # Arch ships Lua 5.4 with lgi (cairo/GLib/GdkPixbuf bindings), same as the desktop it targets.
+    container: archlinux:latest
+    steps:
+      - name: Install Lua 5.4, lgi and busted
+        run: pacman -Syu --noconfirm --needed lua54 lua54-lgi lua54-busted cairo gdk-pixbuf2
+      - uses: actions/checkout@v4
+      - name: Test
+        run: lua5.4 -e 'require("busted.runner")({ standalone = false })'
