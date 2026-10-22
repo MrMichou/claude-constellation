@@ -191,7 +191,7 @@ local function text(cr, str, x, y, size, c, a, center)
   cr:show_text(str)
 end
 
--- On battery: "static" freezes every animation and redraws only on change, "off" hides the layer.
+-- On battery: "static" freezes everything but the Clawd emotes, "off" hides the layer.
 local ON_BATTERY = "static"
 local static = false
 
@@ -268,7 +268,7 @@ local function draw(cr, w, h)
     local name, loops = emote(s, t, stale)
     local frames = sprite_set(name)
     if #frames > 0 then
-      draw_sprite(cr, frames, (loops and not static) and math.floor(t * SPRITE_FPS + i * 7) or 0, s.x, s.y, A)
+      draw_sprite(cr, frames, loops and math.floor(t * SPRITE_FPS + i * 7) or 0, s.x, s.y, A)
     else
       set(cr, col, A); cr:arc(s.x, s.y, 5, 0, 2 * math.pi); cr:fill()
     end
@@ -339,9 +339,7 @@ local function on_battery()
 end
 
 -- Redraw at a high rate only while something is happening, to spare the GPU.
--- While static (on battery) the animation timer stops: redraws happen only when a session
--- changes, or every STATIC_REFRESH seconds so fades and dimming still progress.
-local STATIC_REFRESH = 30
+-- While static (on battery) only the emotes move, so it stays at the idle rate.
 local user_hidden = false
 local anim = gears.timer {
   timeout = 1 / FPS_IDLE,
@@ -349,7 +347,6 @@ local anim = gears.timer {
   callback = function() canvas:emit_signal("widget::redraw_needed") end,
 }
 
-local last_sig, last_draw = nil, 0
 gears.timer {
   timeout = 1,
   autostart = true,
@@ -357,30 +354,13 @@ gears.timer {
   callback = function()
     read_sessions()
     local battery = on_battery()
-    local was_static = static
     static = battery and ON_BATTERY == "static"
     if box then box.visible = not user_hidden and not (battery and ON_BATTERY == "off") end
 
-    if static then
-      if anim.started then anim:stop() end
-      local parts = {}
-      for _, sid in ipairs(order) do
-        local s = sessions[sid]
-        parts[#parts + 1] = sid .. ":" .. tostring(s.state) .. ":" .. tostring(s.ts)
-      end
-      local sig = table.concat(parts, "|")
-      if sig ~= last_sig or not was_static or now() - last_draw >= STATIC_REFRESH then
-        last_sig, last_draw = sig, now()
-        canvas:emit_signal("widget::redraw_needed")
-      end
-      return
-    end
-
     local active = false
     for _, s in pairs(sessions) do if is_active(s) then active = true end end
-    local want = 1 / (active and FPS_ACTIVE or FPS_IDLE)
-    if not anim.started then anim.timeout = want; anim:start()
-    elseif anim.timeout ~= want then anim.timeout = want; anim:again() end
+    local want = 1 / ((active and not static) and FPS_ACTIVE or FPS_IDLE)
+    if anim.timeout ~= want then anim.timeout = want; anim:again() end
   end,
 }
 
