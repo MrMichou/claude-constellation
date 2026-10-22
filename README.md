@@ -28,7 +28,7 @@ echo 'awesome.restart()' | awesome-client
 
 ### Animated lock screen (xsecurelock)
 
-`lock()` locks the screen on the animated constellation through [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`): `saver.lua` (Lua 5.4 + lgi) draws into the lock window with the same engine (`render.lua`) as the wallpaper, in private mode (no paths, commands or current tool, since anyone can see a locked screen) and with the same battery rule. xsecurelock stays in charge of authentication: if the saver crashes, the screen stays locked. Without xsecurelock, `lock()` falls back to a still image for i3lock (`snapshot(path, private)`).
+`lock()` locks the screen on the animated constellation through [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`): `saver.lua` (Lua + lgi; it re-executes itself under the first of lua5.4, lua5.3, lua5.5, lua, luajit, lua5.1 that can load lgi, since on Arch `lua53-lgi` pairs with AwesomeWM) draws into the lock window with the same engine (`render.lua`) as the wallpaper, in private mode (no paths, commands or current tool, since anyone can see a locked screen) and with the same battery rule. xsecurelock stays in charge of authentication: if the saver crashes, the screen stays locked. Without xsecurelock, `lock()` falls back to a still image for i3lock (`snapshot(path, private)`).
 
 ![Lock screen: the same constellation, without labels](docs/lock.gif)
 
