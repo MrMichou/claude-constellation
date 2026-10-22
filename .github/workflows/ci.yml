@@ -42,7 +42,9 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install Lua 5.4, lgi and busted
-        run: pacman -Syu --noconfirm --needed lua54 lua54-lgi lua54-busted cairo gdk-pixbuf2
+        # git: without it actions/checkout falls back to the REST tarball, which honours
+        # .gitattributes export-ignore and drops spec/.
+        run: pacman -Syu --noconfirm --needed git lua54 lua54-lgi lua54-busted cairo gdk-pixbuf2
       - uses: actions/checkout@v4
       - name: Test
         run: lua5.4 -e 'require("busted.runner")({ standalone = false })'
