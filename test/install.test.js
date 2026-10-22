@@ -6,7 +6,7 @@ import path from "node:path";
 import { tmpHome, runNode, readJson, exists, INSTALL, TRACK, ROOT } from "./helpers.js";
 
 const EVENTS = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
-  "PermissionRequest", "Stop", "SessionEnd"];
+  "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 
 describe("install.js", () => {
   let h;
@@ -35,6 +35,9 @@ describe("install.js", () => {
     expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js end$/);
     expect(hooks.PreToolUse.at(-1).matcher).toBe("*");
     expect(hooks.Stop.at(-1).matcher).toBeUndefined();
+    expect(ours(hooks.SubagentStart)[0].command).toMatch(/track\.js substart$/);
+    expect(ours(hooks.SubagentStop)[0].command).toMatch(/track\.js substop$/);
+    expect(hooks.SubagentStop.at(-1).matcher).toBe("*");
   });
 
   it("keeps other settings and hooks, and backs up the original", async () => {

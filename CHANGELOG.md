@@ -15,4 +15,6 @@ All notable changes to claude-constellation are documented here. This project fo
 - **Installer** (`node install.js [--uninstall]`): idempotent hook merge into `~/.claude/settings.json` with a backup, plus the module symlink.
 - **README demos** rendered offline by the real renderer (`demo/record.sh`).
 - **Tests and CI**: vitest suites for the hook and installer, busted specs for the renderer and saver, luacheck, and a GitHub Actions workflow (Node 18/20/22, Lua 5.4 in an Arch container).
+- **Subagents as mini Clawds.** Each subagent circles its session, labelled with its Agent call's description: running during a tool call, walking while thinking, listening on a permission, partying then fading once done. Past 6 running subagents they are grouped by type ("general-purpose ×10"), and past 6 groups the smallest merge into "+k agents". The hook now listens to `SubagentStart`/`SubagentStop` (re-run `node install.js`) and routes tool events carrying `agent_id` to the subagent instead of the session.
+- **`workflow` demo scenario** (`demo/record.sh subagents`): a big multi-agent fan-out, rendered to `docs/subagents.gif`.
 - **Release tooling**: `make release` cuts the changelog, bumps the version and tags; pushing the tag publishes a GitHub release with these notes and a slim tarball.

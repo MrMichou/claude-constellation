@@ -2,7 +2,9 @@
 // Claude Code hook: records, per session, what the session is doing and which resources
 // it touches, for the AwesomeWM desktop "constellation".
 // Writes ~/.claude/constellation/<session_id>.json atomically. Never fails the hook.
-// Usage: node track.js <prompt|pre|post|notify|permreq|stop|end>
+// Subagents (SubagentStart/Stop, and tool events carrying agent_id) are tracked per session
+// under `agents`, so the renderer can draw them as mini nodes around their session.
+// Usage: node track.js <prompt|pre|post|notify|permreq|stop|substart|substop|end>
 
 const fs = require("fs");
 const os = require("os");
@@ -12,6 +14,14 @@ const dir = path.join(os.homedir(), ".claude", "constellation");
 const HISTORY_MAX = 10;
 const LINKS_MAX = 20; // shared-resource keys kept per session
 const LINK_TTL = 3600; // seconds a shared resource stays linkable
+const AGENTS_MAX = 64; // subagents kept per session (big workflows fan out to dozens)
+const AGENT_HISTORY_MAX = 4;
+const AGENT_DONE_KEEP = 60; // seconds a finished subagent stays (the renderer fades it out)
+const AGENT_LOST = 30 * 60; // seconds without events before a running subagent is dropped
+const PENDING_MAX = 16; // Agent tool calls waiting for their SubagentStart
+const PENDING_TTL = 600;
+// Tools a subagent uses to talk to its parent, not resources worth an orbit.
+const INTERNAL_TOOLS = new Set(["SubagentHandback"]);
 
 function shortPath(f) {
   if (!f) return "";
@@ -90,8 +100,64 @@ function linkKeys(t, input) {
   return [];
 }
 
+const cleanId = (v) => String(v || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
+
+// Drops finished and lost subagents, then the oldest ones past AGENTS_MAX.
+function pruneAgents(agents, now) {
+  const kept = Object.entries(agents).filter(([, a]) =>
+    now - a.ts < (a.state === "done" ? AGENT_DONE_KEEP : AGENT_LOST));
+  kept.sort(([, a], [, b]) => b.ts - a.ts);
+  return Object.fromEntries(kept.slice(0, AGENTS_MAX));
+}
+
+// Applies a subagent's event to its entry; false when there is nothing to record.
+function agentEvent(s, event, p, now) {
+  const id = cleanId(p.agent_id);
+  let a = s.agents[id];
+  if (!a) {
+    // SubagentStop also fires for Claude Code's internal agents (prompt suggestions, /btw),
+    // which never had a SubagentStart: ignore those.
+    if (event === "substop") return false;
+    const type = clip(p.agent_type || "agent", 40);
+    // Label it with the description of the oldest pending Agent call of the same type.
+    const i = s.pending.findIndex((q) => q.type === type);
+    const label = i >= 0 ? s.pending.splice(i, 1)[0].label : "";
+    a = { type, label, state: "thinking", tool: "", kind: "", target: "", history: [], started: now };
+    s.agents[id] = a;
+  }
+  // A finished subagent only comes back through SubagentStart (resumed); late events are noise.
+  if (a.state === "done" && event !== "substart") return false;
+  a.ts = now;
+  switch (event) {
+    case "substart": if (a.state === "done") a.state = "thinking"; break; // resumed
+    case "substop": a.state = "done"; break;
+    case "pre": {
+      const t = p.tool_name || "";
+      if (INTERNAL_TOOLS.has(t)) break;
+      const d = describeTool(t, p.tool_input);
+      Object.assign(a, { state: "tool", tool: t, kind: d.kind, target: d.target });
+      a.history.push({ kind: d.kind, target: d.target, ts: now });
+      a.history = a.history.slice(-AGENT_HISTORY_MAX);
+      break;
+    }
+    case "post": a.state = "thinking"; break;
+    case "permreq": a.state = "permission"; break;
+    case "notify": a.state = /permission|approve|allow/i.test(p.message || "") ? "permission" : "waiting"; break;
+    default: return false;
+  }
+  return true;
+}
+
+function addLinks(s, t, input, now) {
+  for (const l of linkKeys(t, input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
+  s.links = Object.fromEntries(Object.entries(s.links)
+    .filter(([, l]) => now - l.ts < LINK_TTL)
+    .sort(([, a], [, b]) => b.ts - a.ts)
+    .slice(0, LINKS_MAX));
+}
+
 function run(event, p) {
-  const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
+  const sid = cleanId(p.session_id);
   if (!sid) return;
   const file = path.join(dir, sid + ".json");
 
@@ -113,9 +179,22 @@ function run(event, p) {
     target: prev.target || "",
     history: prev.history || [],
     links: prev.links || {},
+    agents: prev.agents || {},
+    pending: (prev.pending || []).filter((q) => now - q.ts < PENDING_TTL),
+    since: prev.since || now, // when the session's own state last changed
     ts: now,
   };
 
+  // A subagent's events update its mini node, never the session's own state; the files it
+  // touches still count for links with other sessions.
+  if (event === "substart" || event === "substop" || (p.agent_id && event !== "prompt" && event !== "stop")) {
+    if (!agentEvent(s, event, p, now)) return;
+    if (event === "pre") addLinks(s, p.tool_name || "", p.tool_input, now);
+    s.agents = pruneAgents(s.agents, now);
+    return write(file, s);
+  }
+
+  const before = s.state;
   switch (event) {
     case "prompt": s.state = "thinking"; break;
     case "pre": {
@@ -124,11 +203,12 @@ function run(event, p) {
       Object.assign(s, { state: "tool", tool: t, kind: d.kind, target: d.target });
       s.history.push({ tool: t, kind: d.kind, target: d.target, ts: now });
       s.history = s.history.slice(-HISTORY_MAX);
-      for (const l of linkKeys(t, p.tool_input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
-      s.links = Object.fromEntries(Object.entries(s.links)
-        .filter(([, l]) => now - l.ts < LINK_TTL)
-        .sort(([, a], [, b]) => b.ts - a.ts)
-        .slice(0, LINKS_MAX));
+      addLinks(s, t, p.tool_input, now);
+      if (t === "Agent" || t === "Task") {
+        const i = p.tool_input || {};
+        s.pending.push({ type: clip(i.subagent_type || "general-purpose", 40), label: clip(i.description, 40), ts: now });
+        s.pending = s.pending.slice(-PENDING_MAX);
+      }
       break;
     }
     case "post": s.state = "thinking"; break;
@@ -141,7 +221,12 @@ function run(event, p) {
     case "stop": s.state = "done"; break;
     default: return;
   }
+  if (s.state !== before) s.since = now;
+  s.agents = pruneAgents(s.agents, now);
+  write(file, s);
+}
 
+function write(file, s) {
   fs.mkdirSync(dir, { recursive: true });
   const tmp = file + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(s));
@@ -156,5 +241,5 @@ if (require.main === module) {
     try { run(event, JSON.parse(raw || "{}")); } catch {}
   });
 } else {
-  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys };
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, pruneAgents };
 }

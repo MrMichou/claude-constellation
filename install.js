@@ -22,9 +22,11 @@ const EVENTS = {
   Notification: "notify",
   PermissionRequest: "permreq",
   Stop: "stop",
+  SubagentStart: "substart",
+  SubagentStop: "substop",
   SessionEnd: "end",
 };
-const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest"]);
+const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest", "SubagentStart", "SubagentStop"]);
 
 // A fresh machine may have no settings.json yet: start from {} (and keep a backup otherwise).
 let settings = {};
