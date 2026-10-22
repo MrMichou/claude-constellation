@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Claude Code hook: records, per session, what the session is doing and which resources
 // it touches, for the AwesomeWM desktop "constellation".
-// Writes ~/.claude/constellation/<session_id>.json atomically. Never fails the hook.
+// Writes ~/.claude/constellation/<session_id>.json atomically, under a lock: a session's hooks
+// run concurrently (parallel tool calls, subagents fanning out) and would otherwise overwrite
+// each other's updates. Never fails the hook.
 // Subagents (SubagentStart/Stop, and tool events carrying agent_id) are tracked per session
 // under `agents`, so the renderer can draw them as mini nodes around their session.
 // Usage: node track.js <prompt|pre|post|notify|permreq|stop|substart|substop|end>
@@ -22,6 +24,8 @@ const PENDING_MAX = 16; // Agent tool calls waiting for their SubagentStart
 const PENDING_TTL = 600;
 // Tools a subagent uses to talk to its parent, not resources worth an orbit.
 const INTERNAL_TOOLS = new Set(["SubagentHandback"]);
+const LOCK_WAIT = 3000; // ms to wait for the lock before writing anyway
+const LOCK_STALE = 2000; // ms after which a lock left by a killed hook is broken
 
 function shortPath(f) {
   if (!f) return "";
@@ -156,11 +160,46 @@ function addLinks(s, t, input, now) {
     .slice(0, LINKS_MAX));
 }
 
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// Runs fn while holding <file>.lock (created exclusively). Gives up waiting after LOCK_WAIT
+// and runs fn anyway: a lost update beats a hook that stalls Claude Code.
+function withLock(file, fn) {
+  const lock = file + ".lock";
+  const deadline = Date.now() + LOCK_WAIT;
+  let fd = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lock, "wx");
+    } catch (e) {
+      if (e.code === "ENOENT" && !fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); continue; }
+      if (e.code !== "EEXIST" || Date.now() > deadline) break;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE) { fs.rmSync(lock, { force: true }); continue; }
+      } catch {}
+      pause(2 + Math.random() * 8);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (fd !== null) {
+      fs.closeSync(fd);
+      fs.rmSync(lock, { force: true });
+    }
+  }
+}
+
+const EVENTS = new Set(["prompt", "pre", "post", "notify", "permreq", "stop", "substart", "substop", "end"]);
+
 function run(event, p) {
   const sid = cleanId(p.session_id);
-  if (!sid) return;
+  if (!sid || !EVENTS.has(event)) return;
   const file = path.join(dir, sid + ".json");
+  withLock(file, () => update(event, p, sid, file));
+}
 
+function update(event, p, sid, file) {
   if (event === "end") {
     fs.rmSync(file, { force: true });
     return;
@@ -241,5 +280,5 @@ if (require.main === module) {
     try { run(event, JSON.parse(raw || "{}")); } catch {}
   });
 } else {
-  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, pruneAgents };
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, pruneAgents, withLock };
 }

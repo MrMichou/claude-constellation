@@ -3,6 +3,7 @@
 // agent_type, the Agent call returns right after SubagentStart, and the subagent hands its
 // result back through an internal SubagentHandback tool before SubagentStop.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { tmpHome, runNode, readJson, exists, TRACK } from "./helpers.js";
@@ -97,6 +98,38 @@ describe("track.js subagents", () => {
     await sub("pre", "a1", { tool_name: "Read", tool_input: { file_path: "/x" } });
     expect(state().since).toBe(since);
     expect(state().ts).toBeGreaterThan(since);
+  });
+});
+
+describe("track.js concurrent hooks", () => {
+  let h;
+  beforeEach(() => { h = tmpHome(); });
+  afterEach(() => h.cleanup());
+
+  const hook = (event, payload) => runNode(TRACK, [event], { home: h.home, stdin: { session_id: "s1", ...payload } });
+  const state = () => readJson(path.join(h.dataDir, "s1.json"));
+
+  it("keeps every subagent of a parallel fan-out (no lost updates)", async () => {
+    await Promise.all(Array.from({ length: 20 }, (_, i) =>
+      hook("substart", { agent_id: "a" + i, agent_type: i % 2 ? "Explore" : "Plan" })));
+    expect(Object.keys(state().agents)).toHaveLength(20);
+    expect(fs.readdirSync(h.dataDir)).toEqual(["s1.json"]); // no lock or temp file left
+  });
+
+  it("keeps every call of parallel tool uses", async () => {
+    await Promise.all(Array.from({ length: 10 }, (_, i) => hook("pre", { tool_name: "Grep", tool_input: { pattern: "p" + i } })));
+    expect(state().history).toHaveLength(10);
+  });
+
+  it("breaks a lock left behind by a killed hook", async () => {
+    fs.mkdirSync(h.dataDir, { recursive: true });
+    const lock = path.join(h.dataDir, "s1.json.lock");
+    fs.writeFileSync(lock, "");
+    const old = new Date(Date.now() - 10_000);
+    fs.utimesSync(lock, old, old);
+    await hook("prompt", { cwd: "/w/p" });
+    expect(state().state).toBe("thinking");
+    expect(fs.existsSync(lock)).toBe(false);
   });
 });
 
