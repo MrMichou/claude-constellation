@@ -73,6 +73,24 @@ describe("render.lua", function()
       assert.are.equal(0, #draw().texts)
     end)
 
+    it("returns the number of shown sessions", function()
+      H.session(data, "a")
+      H.session(data, "b", { ts = os.time() - 4 * 3600 })
+      H.session(data, "c")
+      assert.are.same({ false, 2 }, { R.read_sessions() })
+    end)
+
+    it("picks up a rewritten session file, even at the same size", function()
+      H.session(data, "s1", { project = "aaa" })
+      R.read_sessions()
+      GLib.usleep(10000)
+      H.session(data, "s1", { project = "bbb" })
+      R.read_sessions()
+      local rec = draw()
+      assert.is_true(rec.has_text("bbb"))
+      assert.is_false(rec.has_text("aaa"))
+    end)
+
     it("copes with a missing data directory", function()
       R.set_dirs(data .. "nope/")
       assert.is_false(R.read_sessions())
@@ -233,10 +251,10 @@ describe("render.lua", function()
   end)
 
   describe("battery freeze (static)", function()
+    -- Where the labels are drawn: they follow the nodes.
     local function node_positions(rec)
-      local out = {}
-      for _, a in ipairs(rec.arcs) do if a.r >= 40 then out[#out + 1] = a.x .. "," .. a.y end end
-      return table.concat(out, ";")
+      assert.is_true(#rec.text_pos > 0)
+      return table.concat(rec.text_pos, ";")
     end
 
     before_each(function()

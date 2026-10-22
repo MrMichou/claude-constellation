@@ -55,13 +55,18 @@ function H.supply(dir, name, files)
   for k, v in pairs(files) do H.write(dir .. name .. "/" .. k, v .. "\n") end
 end
 
--- A cairo context stand-in that records what gets drawn: texts, arcs and colours.
+-- A cairo context stand-in that records what gets drawn: texts (and where), arcs and colours.
 -- Every other cairo method is a no-op, so render.lua's drawing logic can be asserted
 -- without pixels.
 function H.recorder()
-  local rec = { texts = {}, arcs = {}, colors = {} }
+  local rec = { texts = {}, text_pos = {}, arcs = {}, colors = {} }
   local cr = setmetatable({}, { __index = function() return function() end end })
-  function cr.show_text(_, s) rec.texts[#rec.texts + 1] = s end
+  local px, py = 0, 0
+  function cr.move_to(_, x, y) px, py = x, y end
+  function cr.show_text(_, s)
+    rec.texts[#rec.texts + 1] = s
+    rec.text_pos[#rec.text_pos + 1] = px .. "," .. py
+  end
   function cr.text_extents() return { width = 10, height = 10 } end
   function cr.arc(_, x, y, r) rec.arcs[#rec.arcs + 1] = { x = x, y = y, r = r } end
   function cr.get_source() return { set_filter = function() end } end
