@@ -1,7 +1,9 @@
 -- Claude constellation renderer: reads ~/.claude/constellation/<sid>.json (written by
 -- hooks/track.js) and draws every live session as a glowing Clawd node with the resources it
--- touches orbiting around it. Pure cairo + Gio (lgi), no AwesomeWM dependency, so the same code
--- drives the desktop layer (init.lua) and the xsecurelock saver (saver.lua).
+-- touches orbiting around it. Running sessions with no hook file yet are discovered from
+-- Claude Code's own registry (~/.claude/sessions). Pure cairo + Gio (lgi), no AwesomeWM
+-- dependency, so the same code drives the desktop layer (init.lua) and the xsecurelock saver
+-- (saver.lua).
 
 local lgi = require("lgi")
 local cairo = lgi.cairo
@@ -35,12 +37,17 @@ local CLAWD = {
 
 local R = { FPS_ACTIVE = 30, FPS_IDLE = 8 }
 
--- Where session files and power supplies are read from; overridable for tests.
+-- Where session files, Claude Code's session registry (internal, best-effort), processes and
+-- power supplies are read from; overridable for tests.
 local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
 local PS_DIR = "/sys/class/power_supply/"
-function R.set_dirs(data_dir, power_dir)
+local REGISTRY_DIR = os.getenv("HOME") .. "/.claude/sessions/"
+local PROC_DIR = "/proc/"
+function R.set_dirs(data_dir, power_dir, registry_dir, proc_dir)
   DATA_DIR = data_dir or DATA_DIR
   PS_DIR = power_dir or PS_DIR
+  REGISTRY_DIR = registry_dir or REGISTRY_DIR
+  PROC_DIR = proc_dir or PROC_DIR
 end
 
 -- "#rgb", "#rrggbb" or "#rrggbbaa" -> {r, g, b} in 0..1; nil if unparsable.
@@ -177,25 +184,99 @@ local function shared_links(t)
   return list
 end
 
+local function read_line(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local v = f:read("*l"); f:close()
+  return v
+end
+
 -- Decoded session files with the size/mtime they were read at: a file is only parsed again
 -- when the hook rewrote it.
 local files = {}
 local links = {} -- shared_links(), refreshed with the sessions
+
+local function file_stamp(info)
+  return ("%d:%d:%d"):format(info:get_size(), info:get_attribute_uint64("time::modified"),
+    info:get_attribute_uint32("time::modified-usec"))
+end
+local STAMP_ATTRS = "standard::name,standard::size,time::modified,time::modified-usec"
+
+-- Start time (clock ticks since boot) of a process: field 22 of /proc/<pid>/stat, matching the
+-- registry's procStart. nil if the process is gone.
+local function proc_start(pid)
+  local line = read_line(PROC_DIR .. pid .. "/stat")
+  if not line then return nil end
+  local rest = line:match("^%d+ %b() (.*)$") -- skip "pid (comm)" (comm may hold spaces)
+  local n = 0
+  for field in (rest or ""):gmatch("%S+") do
+    n = n + 1
+    if n == 20 then return field end -- field 22 overall, 3 is the first after comm
+  end
+end
+
+-- Registry entries (~/.claude/sessions/<pid>.json), cached by size/mtime like the hook files.
+local registry = {}
+
+-- Sessions Claude Code reports as running but that have no hook file yet (idle, or started
+-- before the hooks were installed): kept if the pid is alive with the same start time. Hook
+-- data wins as soon as it exists; these only fill the gaps.
+local function read_registry(seen)
+  local seen_files = {}
+  pcall(function()
+    local en = Gio.File.new_for_path(REGISTRY_DIR):enumerate_children(STAMP_ATTRS,
+      Gio.FileQueryInfoFlags.NONE)
+    if not en then return end
+    while true do
+      local info = en:next_file(); if not info then break end
+      local name = info:get_name()
+      if name:match("^%d+%.json$") then
+        local stamp = file_stamp(info)
+        local f = registry[name]
+        local fresh = not f or f.stamp ~= stamp
+        if fresh then
+          f = { stamp = stamp, data = R.read_json(REGISTRY_DIR .. name) }
+          registry[name] = f
+        end
+        seen_files[name] = true
+        local r = f.data
+        local sid = type(r) == "table" and type(r.sessionId) == "string" and r.sessionId
+        if sid and not seen[sid] and r.kind == "interactive" and r.procStart ~= nil
+          and proc_start(tonumber(r.pid) or -1) == tostring(r.procStart) then
+          local s = sessions[sid]
+          if not s or fresh or not s.registry then
+            s = s or { alpha = 0 }
+            s.sid, s.registry, s.history, s.links = sid, true, {}, nil
+            s.tool, s.kind, s.target = nil, nil, nil
+            s.project = tostring(r.cwd or ""):match("([^/]+)/*$") or ""
+            s.state = r.status == "busy" and "thinking" or "idle"
+            s.ts = (tonumber(r.updatedAt) or tonumber(r.startedAt) or 0) / 1000
+            s.sats = {}
+            sessions[sid] = s
+          end
+          seen[sid] = true
+        end
+      end
+    end
+  end)
+  for name in pairs(registry) do
+    if not seen_files[name] then registry[name] = nil end
+  end
+end
 
 -- Reload the session files; returns whether any session is working, and the session count.
 function R.read_sessions()
   local seen, seen_files = {}, {}
   local t = now()
   pcall(function()
-    local en = Gio.File.new_for_path(DATA_DIR):enumerate_children(
-      "standard::name,standard::size,time::modified,time::modified-usec", Gio.FileQueryInfoFlags.NONE)
+    local en = Gio.File.new_for_path(DATA_DIR):enumerate_children(STAMP_ATTRS,
+      Gio.FileQueryInfoFlags.NONE)
     if not en then return end
     while true do
       local info = en:next_file(); if not info then break end
       local sid = info:get_name():match("^(.+)%.json$")
       if sid then
-        local stamp = ("%d:%d:%d"):format(info:get_size(), info:get_attribute_uint64("time::modified"),
-          info:get_attribute_uint32("time::modified-usec"))
+        local stamp = file_stamp(info)
         local f = files[sid]
         local fresh = not f or f.stamp ~= stamp
         if fresh then
@@ -206,9 +287,10 @@ function R.read_sessions()
         local d = f.data
         if type(d) == "table" and t - (tonumber(d.ts) or 0) < HIDE_AFTER then
           local s = sessions[sid]
-          if not s or fresh then
+          if not s or fresh or s.registry then
             s = s or { alpha = 0 }
             for k, v in pairs(d) do s[k] = v end
+            s.registry = nil
             s.sats = satellites(s)
             sessions[sid] = s
           end
@@ -220,6 +302,7 @@ function R.read_sessions()
   for sid in pairs(files) do
     if not seen_files[sid] then files[sid] = nil end
   end
+  read_registry(seen)
   for sid in pairs(sessions) do
     if not seen[sid] then sessions[sid] = nil end
   end
@@ -236,12 +319,6 @@ end
 
 -- On battery = the system battery is discharging (peripheral batteries have scope "Device").
 -- Machines without a battery are always on mains.
-local function read_line(path)
-  local f = io.open(path, "r")
-  if not f then return nil end
-  local v = f:read("*l"); f:close()
-  return v
-end
 function R.on_battery()
   local discharging = false
   pcall(function()
