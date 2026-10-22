@@ -11,6 +11,7 @@ Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaî
 
 - `hooks/track.js` est un hook Claude Code. Il écrit `~/.claude/constellation/<session_id>.json` (état, outil, cible, historique) et supprime le fichier à `SessionEnd`.
 - `awesome/claude_constellation/` est le module Lua. Il crée une wibox `type = "desktop"` sous toutes les fenêtres, sur l'écran principal, et dessine en Cairo. Il tourne à 30 fps quand une session travaille, à 8 fps sinon.
+- **Sur batterie** (batterie système en `Discharging`), tout est figé : plus de dérive, de pulsation, de sprites animés ni d'impulsions. Le minuteur d'animation est arrêté et l'écran n'est redessiné que lorsqu'une session change (ou toutes les 30 s). Mettre `ON_BATTERY = "off"` dans `init.lua` pour masquer complètement la couche sur batterie.
 
 ## Installation
 

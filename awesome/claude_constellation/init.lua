@@ -191,8 +191,14 @@ local function text(cr, str, x, y, size, c, a, center)
   cr:show_text(str)
 end
 
+-- On battery: "static" freezes every animation and redraws only on change, "off" hides the layer.
+local ON_BATTERY = "static"
+local static = false
+
 local function draw(cr, w, h)
   local t = now()
+  local ta = static and 0 or t -- animation clock; frozen while static
+  local ease = static and 1 or 0.05
   set(cr, C.bg); cr:paint()
   cr:select_font_face("monospace", lgi.cairo.FontSlant.NORMAL, lgi.cairo.FontWeight.NORMAL)
 
@@ -206,13 +212,13 @@ local function draw(cr, w, h)
     local ax = n == 1 and cx or cx + rx * math.cos(ang)
     local ay = n == 1 and cy or cy + ry * math.sin(ang)
     local seed = i * 1.7
-    local tx = ax + 18 * math.sin(t * 0.13 + seed)
-    local ty = ay + 12 * math.cos(t * 0.11 + seed)
-    s.x = s.x and s.x + (tx - s.x) * 0.05 or tx
-    s.y = s.y and s.y + (ty - s.y) * 0.05 or ty
+    local tx = ax + 18 * math.sin(ta * 0.13 + seed)
+    local ty = ay + 12 * math.cos(ta * 0.11 + seed)
+    s.x = s.x and s.x + (tx - s.x) * ease or tx
+    s.y = s.y and s.y + (ty - s.y) * ease or ty
 
     local stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)
-    s.alpha = s.alpha + (((stale and 0.35) or 1) - s.alpha) * 0.08
+    s.alpha = s.alpha + (((stale and 0.35) or 1) - s.alpha) * (static and 1 or 0.08)
     local A = s.alpha
     local col = node_color(s)
 
@@ -221,7 +227,7 @@ local function draw(cr, w, h)
     for j, sat in ipairs(sats) do
       local age = t - (tonumber(sat.ts) or 0)
       local fade = math.max(0.12, 1 - age / FADE_LINK)
-      local sa = (j - 1) / #sats * 2 * math.pi + t * 0.04 + seed
+      local sa = (j - 1) / #sats * 2 * math.pi + ta * 0.04 + seed
       local rad = (j % 2 == 0) and 150 or 115
       local sx, sy = s.x + rad * math.cos(sa), s.y + rad * 0.8 * math.sin(sa)
       local kc = C.kind[sat.kind] or C.kind.other
@@ -242,7 +248,7 @@ local function draw(cr, w, h)
       end
 
       -- Pulse travelling along the link right after the call.
-      if age >= 0 and age < PARTICLE_TIME then
+      if not static and age >= 0 and age < PARTICLE_TIME then
         local k = age / PARTICLE_TIME
         local px, py = s.x + (sx - s.x) * k, s.y + (sy - s.y) * k
         glow(cr, px, py, 12, kc, 0.9 * A)
@@ -251,7 +257,8 @@ local function draw(cr, w, h)
 
     -- Session node: pulse speed and colour follow the session state.
     local pulse
-    if s.state == "thinking" then pulse = 0.5 + 0.5 * math.sin(t * 5)
+    if static then pulse = 0.6
+    elseif s.state == "thinking" then pulse = 0.5 + 0.5 * math.sin(t * 5)
     elseif s.state == "tool" then pulse = 0.6 + 0.4 * math.sin(t * 8)
     elseif s.state == "permission" then pulse = (math.floor(t * 2) % 2 == 0) and 1 or 0.3
     elseif s.state == "waiting" then pulse = 0.5 + 0.5 * math.sin(t * 1.5)
@@ -261,7 +268,7 @@ local function draw(cr, w, h)
     local name, loops = emote(s, t, stale)
     local frames = sprite_set(name)
     if #frames > 0 then
-      draw_sprite(cr, frames, loops and math.floor(t * SPRITE_FPS + i * 7) or 0, s.x, s.y, A)
+      draw_sprite(cr, frames, (loops and not static) and math.floor(t * SPRITE_FPS + i * 7) or 0, s.x, s.y, A)
     else
       set(cr, col, A); cr:arc(s.x, s.y, 5, 0, 2 * math.pi); cr:fill()
     end
@@ -304,26 +311,82 @@ place(screen.primary)
 screen.connect_signal("property::geometry", function(s) if s == screen.primary then place(s) end end)
 screen.connect_signal("primary_changed", function(s) if s == screen.primary then place(s) end end)
 
+-- On battery = the system battery is discharging (peripheral batteries have scope "Device").
+-- Machines without a battery are always on mains.
+local PS_DIR = "/sys/class/power_supply/"
+local function read_line(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local v = f:read("*l"); f:close()
+  return v
+end
+local function on_battery()
+  local discharging = false
+  pcall(function()
+    local en = Gio.File.new_for_path(PS_DIR)
+      :enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
+    if not en then return end
+    while true do
+      local info = en:next_file(); if not info then break end
+      local dev = PS_DIR .. info:get_name() .. "/"
+      if read_line(dev .. "type") == "Battery" and read_line(dev .. "scope") ~= "Device"
+        and read_line(dev .. "status") == "Discharging" then
+        discharging = true
+      end
+    end
+  end)
+  return discharging
+end
+
 -- Redraw at a high rate only while something is happening, to spare the GPU.
+-- While static (on battery) the animation timer stops: redraws happen only when a session
+-- changes, or every STATIC_REFRESH seconds so fades and dimming still progress.
+local STATIC_REFRESH = 30
+local user_hidden = false
 local anim = gears.timer {
   timeout = 1 / FPS_IDLE,
   autostart = true,
   callback = function() canvas:emit_signal("widget::redraw_needed") end,
 }
 
+local last_sig, last_draw = nil, 0
 gears.timer {
   timeout = 1,
   autostart = true,
   call_now = true,
   callback = function()
     read_sessions()
+    local battery = on_battery()
+    local was_static = static
+    static = battery and ON_BATTERY == "static"
+    if box then box.visible = not user_hidden and not (battery and ON_BATTERY == "off") end
+
+    if static then
+      if anim.started then anim:stop() end
+      local parts = {}
+      for _, sid in ipairs(order) do
+        local s = sessions[sid]
+        parts[#parts + 1] = sid .. ":" .. tostring(s.state) .. ":" .. tostring(s.ts)
+      end
+      local sig = table.concat(parts, "|")
+      if sig ~= last_sig or not was_static or now() - last_draw >= STATIC_REFRESH then
+        last_sig, last_draw = sig, now()
+        canvas:emit_signal("widget::redraw_needed")
+      end
+      return
+    end
+
     local active = false
     for _, s in pairs(sessions) do if is_active(s) then active = true end end
     local want = 1 / (active and FPS_ACTIVE or FPS_IDLE)
-    if anim.timeout ~= want then anim.timeout = want; anim:again() end
+    if not anim.started then anim.timeout = want; anim:start()
+    elseif anim.timeout ~= want then anim.timeout = want; anim:again() end
   end,
 }
 
 return {
-  toggle = function() if box then box.visible = not box.visible end end,
+  toggle = function()
+    user_hidden = not user_hidden
+    if box then box.visible = not user_hidden end
+  end,
 }
