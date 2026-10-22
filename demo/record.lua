@@ -2,7 +2,8 @@
 -- Renders the README demos offline with the real renderer (render.lua) on a scripted set of
 -- fake sessions and a simulated clock, so the output is reproducible and leaks nothing.
 -- Usage: demo/record.sh (wraps this script and encodes the GIFs with ffmpeg).
---   lua5.4 demo/record.lua <out_dir> <wallpaper|lock> <width> <height> <fps> <seconds>
+--   lua5.4 demo/record.lua <out_dir> <wallpaper|lock|layouts> <width> <height> <fps> <seconds>
+-- "layouts" cycles through every layout (R.LAYOUTS), an equal share of the time each.
 
 local OUT, MODE = arg[1], arg[2] or "wallpaper"
 local W, H = tonumber(arg[3]) or 1280, tonumber(arg[4]) or 720
@@ -48,16 +49,35 @@ local function session(sid, project, state, history, ago)
     h[#h + 1] = { kind = e[1], target = e[2], ts = T0 + e[3] }
   end
   S[sid] = { sid = sid, project = project, state = state, tool = "", kind = "", target = "",
-    history = h, ts = T0 - (ago or 0) }
+    history = h, timeline = {}, links = {}, ts = T0 - (ago or 0) }
+end
+
+-- Tool calls over the last 20 minutes for the swimlanes, from a seeded generator so every
+-- run draws the same lanes: { k = kind, s = start, e = end }, like the hook writes them.
+local seed = 7
+local function rnd() seed = (seed * 16807) % 2147483647; return seed / 2147483647 end
+local KINDS = { "file", "file", "file", "shell", "shell", "search", "web", "agent", "mcp" }
+local function past_calls(sid, busy, quiet_since)
+  local t = T0 - 1200
+  while t < T0 - (quiet_since or 0) - 5 do
+    if rnd() < busy then
+      local e = t + 3 + rnd() * 25
+      table.insert(S[sid].timeline, { k = KINDS[math.floor(rnd() * #KINDS) + 1], s = t, e = e })
+    end
+    t = t + 10 + rnd() * 35
+  end
 end
 
 local function emit(sid, event, tool, kind, target)
   local s, ts = S[sid], T0 + clock
   s.ts = ts
+  local open = s.timeline[#s.timeline]
+  if open and not open.e and event ~= "permission" then open.e = ts end
   if event == "pre" then
     s.state, s.tool, s.kind, s.target = "tool", tool, kind, target
     table.insert(s.history, { tool = tool, kind = kind, target = target, ts = ts })
     while #s.history > 10 do table.remove(s.history, 1) end
+    table.insert(s.timeline, { k = kind, s = ts })
   elseif event == "post" or event == "prompt" then s.state = "thinking"
   elseif event == "permission" then s.state = "permission"
   elseif event == "stop" then s.state = "done"
@@ -85,6 +105,15 @@ session("d", "dotfiles", "done", {
   { "file", "…/nvim/init.lua", -1300 },
   { "shell", "stow nvim", -1250 },
 }, 15 * 60)
+if MODE == "layouts" then
+  past_calls("a", 0.8); past_calls("b", 0.85); past_calls("c", 0.6); past_calls("d", 0.4, 15 * 60)
+  -- api-server and infra both edit the CI pipeline: a shared resource.
+  local shared = { kind = "file", label = "deploy.yml", ts = T0 - 90 }
+  S.b.links["file:/work/ci/deploy.yml"] = shared
+  S.c.links["file:/work/ci/deploy.yml"] = shared
+  table.insert(S.b.history, { kind = "file", target = "…/ci/deploy.yml", ts = T0 - 90 })
+  table.insert(S.c.history, { kind = "file", target = "…/ci/deploy.yml", ts = T0 - 80 })
+end
 for _, s in pairs(S) do save(s) end
 
 -- Timeline: { at, sid, event, tool, kind, target }
@@ -118,6 +147,7 @@ local timeline = {
 
 local surface = cairo.ImageSurface.create(cairo.Format.RGB24, W, H)
 local opts = { private = MODE == "lock" }
+local layout_time = SECONDS / #R.LAYOUTS
 local PREROLL = 2 -- seconds rendered but not saved, so nodes have faded in and settled
 local frames, next_ev = math.floor(SECONDS * FPS), 1
 for f = -PREROLL * FPS, frames - 1 do
@@ -128,6 +158,9 @@ for f = -PREROLL * FPS, frames - 1 do
     next_ev = next_ev + 1
   end
   R.read_sessions()
+  if MODE == "layouts" then
+    opts.layout = R.LAYOUTS[math.min(#R.LAYOUTS, math.floor(math.max(clock, 0) / layout_time) + 1)]
+  end
   R.draw(cairo.Context(surface), W, H, opts)
   if f >= 0 then surface:write_to_png(string.format("%s/%05d.png", OUT, f)) end
   collectgarbage("step")

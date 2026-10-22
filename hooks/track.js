@@ -12,6 +12,8 @@ const dir = path.join(os.homedir(), ".claude", "constellation");
 const HISTORY_MAX = 10;
 const LINKS_MAX = 20; // shared-resource keys kept per session
 const LINK_TTL = 3600; // seconds a shared resource stays linkable
+const TIMELINE_TTL = 1800; // seconds of tool calls kept for the swimlanes layout
+const TIMELINE_MAX = 200;
 
 function shortPath(f) {
   if (!f) return "";
@@ -113,8 +115,14 @@ function run(event, p) {
     target: prev.target || "",
     history: prev.history || [],
     links: prev.links || {},
+    // Tool calls as { k: kind, s: start, e: end }; `e` is missing while the call runs.
+    timeline: prev.timeline || [],
     ts: now,
   };
+  // The running call ends with its post, the next call or the turn; a permission prompt or a
+  // notification happens during the call, so it stays open.
+  const open = s.timeline.at(-1);
+  if (open && open.e === undefined && !["permreq", "notify"].includes(event)) open.e = now;
 
   switch (event) {
     case "start": break; // registers the session as idle so it shows before its first prompt
@@ -125,6 +133,8 @@ function run(event, p) {
       Object.assign(s, { state: "tool", tool: t, kind: d.kind, target: d.target });
       s.history.push({ tool: t, kind: d.kind, target: d.target, ts: now });
       s.history = s.history.slice(-HISTORY_MAX);
+      s.timeline.push({ k: d.kind, s: now });
+      s.timeline = s.timeline.filter((e) => now - e.s < TIMELINE_TTL).slice(-TIMELINE_MAX);
       for (const l of linkKeys(t, p.tool_input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
       s.links = Object.fromEntries(Object.entries(s.links)
         .filter(([, l]) => now - l.ts < LINK_TTL)

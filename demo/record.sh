@@ -20,4 +20,5 @@ record() {
 
 record constellation wallpaper 15 12 960
 record lock lock 15 8 800
+record layouts layouts 15 20 960
 ls -la "$out"
