@@ -1,4 +1,16 @@
-#!/usr/bin/env lua5.4
+#!/bin/sh
+_=[[
+# Polyglot: sh runs this block, which re-executes the file under the first Lua that can load
+# lgi (distros name and version the interpreter differently); Lua sees it as a comment and a
+# string. A plain `#!/usr/bin/env lua5.x` shebang can't probe for lgi.
+for lua in lua5.4 lua5.3 lua5.5 lua luajit lua5.1; do
+  if command -v "$lua" >/dev/null 2>&1 && "$lua" -e 'require("lgi")' >/dev/null 2>&1; then
+    exec "$lua" "$0" "$@"
+  fi
+done
+echo "claude-constellation-saver: no Lua interpreter with lgi found" >&2
+exit 1
+]]
 -- xsecurelock saver: animates the Claude constellation inside the lock window, in private mode
 -- (no paths, commands or tool targets). xsecurelock runs it with XSECURELOCK_SAVER=<this file>
 -- and hands over the window to draw into in $XSCREENSAVER_WINDOW. The saver has no say in
@@ -43,13 +55,17 @@ local function frame()
 end
 
 -- Same pacing as the desktop layer: fast while a session works, idle rate otherwise or on battery.
-local fps, timer_id
+local fps, timer_id, last_err
 local function schedule(want)
   if want == fps and timer_id then return end
   fps = want
   if timer_id then GLib.source_remove(timer_id) end
   timer_id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, math.floor(1000 / fps), function()
-    pcall(frame)
+    local ok, err = pcall(frame)
+    if not ok and err ~= last_err then
+      last_err = err
+      io.stderr:write("claude-constellation-saver: ", tostring(err), "\n")
+    end
     return true
   end)
 end

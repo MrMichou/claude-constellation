@@ -16,6 +16,12 @@ describe("track.js hook", () => {
   const pre = (tool_name, tool_input, sid = "s1") =>
     hook("pre", { session_id: sid, cwd: "/work/proj", tool_name, tool_input });
 
+  it("start registers the session as idle before its first prompt", async () => {
+    const r = await hook("start", { session_id: "s1", cwd: "/work/my-proj" });
+    expect(r.code).toBe(0);
+    expect(state()).toMatchObject({ sid: "s1", project: "my-proj", state: "idle", history: [] });
+  });
+
   it("prompt marks the session as thinking and records the project", async () => {
     const r = await hook("prompt", { session_id: "s1", cwd: "/work/my-proj" });
     expect(r.code).toBe(0);
