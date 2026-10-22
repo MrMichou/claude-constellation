@@ -308,7 +308,7 @@ local function draw_links(cr, t, ta, static, private)
     end
 
     local lx, ly = at(0.5)
-    local label = private and (link.kind == "file" and "fichier" or "tmux")
+    local label = private and (link.kind == "file" and "file" or "tmux")
       or table.concat(link.labels, " · ")
     text(cr, "⇄ " .. label, lx, ly - 6, 11, kc, 0.85 * A, true)
   end

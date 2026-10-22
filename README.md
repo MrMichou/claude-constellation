@@ -1,36 +1,36 @@
 # claude-constellation
 
-Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaît comme un nœud lumineux. Les ressources qu'elle manipule (fichiers, commandes shell, recherches, web, serveurs MCP, subagents) gravitent autour d'elle.
+Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a glowing node. The resources it works with (files, shell commands, searches, web, MCP servers, subagents) orbit around it.
 
-![Quatre sessions Claude Code : outils en cours, permission en attente, session endormie](docs/constellation.gif)
+![Four Claude Code sessions: tools running, a pending permission, a sleeping session](docs/constellation.gif)
 
-- **Nœud** : pulse selon l'état de la session. Bleu accent pour `thinking`, couleur du type d'outil pour `tool`, jaune clignotant pour une permission en attente, gris pour `done`/`idle`. La session est atténuée après 10 min d'inactivité et masquée après 3 h.
-- **Emote Clawd** : comme dans [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), chaque nœud affiche un crabe animé selon l'état : *thinking*, *typing* pendant un outil, *listening* en attente de permission, *birthday* pendant 30 s après la fin d'un tour, *sleeping* quand la session est inactive. Artwork : [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
-- **Satellites** : les 10 dernières cibles de la session. Leur lien s'estompe sur 5 min, et une impulsion parcourt le lien à chaque appel d'outil.
-- **Liens entre sessions** : deux sessions qui utilisent la même ressource dans la dernière demi-heure sont reliées par une courbe étiquetée (« ⇄ tmux 0 », « ⇄ deploy.yml »), parcourue par une lueur. Ressources reconnues : un même fichier (Read/Edit/Write), ou une même session tmux pilotée par `tmux … -t <cible>` (y compris `-t $P` avec `P=0:0` ou une boucle `for p in 0:0.0 0:0.1`). Sur l'écran de verrouillage, seuls « tmux » / « fichier » sont affichés.
-- **Couleurs par type** : file = bleu, shell = vert, search = cyan, web = magenta, agent = jaune, mcp = rouge.
+- **Node**: pulses with the session state. Accent blue for `thinking`, the tool kind's colour for `tool`, blinking yellow for a pending permission, grey for `done`/`idle`. A session is dimmed after 10 min of inactivity and hidden after 3 h.
+- **Clawd emote**: as in [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), each node shows an animated crab matching its state: *thinking*, *typing* during a tool call, *listening* while waiting for a permission, *birthday* for 30 s after a turn ends, *sleeping* when the session is idle. Artwork: [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
+- **Satellites**: the session's last 10 targets. Their link fades out over 5 min, and a pulse travels along the link on every tool call.
+- **Links between sessions**: two sessions that used the same resource within the last half hour are joined by a labelled curve ("⇄ tmux 0", "⇄ deploy.yml") with a glow running along it. Recognised resources: the same file (Read/Edit/Write), or the same tmux session driven via `tmux … -t <target>` (including `-t $P` with `P=0:0`, or a `for p in 0:0.0 0:0.1` loop). On the lock screen, only "tmux" / "file" is shown.
+- **Colours by kind**: file = blue, shell = green, search = cyan, web = magenta, agent = yellow, mcp = red.
 
-## Fonctionnement
+## How it works
 
-- `hooks/track.js` est un hook Claude Code. Il écrit `~/.claude/constellation/<session_id>.json` (état, outil, cible, historique) et supprime le fichier à `SessionEnd`.
-- `awesome/claude_constellation/` est le module Lua : `render.lua` dessine (cairo, sans dépendance à Awesome), `init.lua` l'intègre à Awesome, `saver.lua` l'anime sur l'écran de verrouillage. Il crée une wibox `type = "desktop"` sous toutes les fenêtres, sur l'écran principal, et dessine en Cairo. Il tourne à 30 fps quand une session travaille, à 8 fps sinon.
-- **Sur batterie** (batterie système en `Discharging`), seuls les emotes Clawd restent animés : la dérive, la pulsation, les orbites et les impulsions sont figées, et le redessin est plafonné à 8 fps. Mettre `ON_BATTERY = "off"` dans `init.lua` pour masquer complètement la couche sur batterie.
+- `hooks/track.js` is a Claude Code hook. It writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history) and deletes the file on `SessionEnd`.
+- `awesome/claude_constellation/` is the Lua module: `render.lua` draws (cairo, no Awesome dependency), `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
+- **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
 
 ```sh
-node install.js            # hooks dans ~/.claude/settings.json + symlink du module
-# puis dans ~/.config/awesome/rc.lua, après beautiful.init(...) mais AVANT require("ui")
-# (sinon la couche bureau recouvre la barre) :
+node install.js            # hooks in ~/.claude/settings.json + module symlink
+# then in ~/.config/awesome/rc.lua, after beautiful.init(...) but BEFORE require("ui")
+# (otherwise the desktop layer covers the bar):
 #   pcall(require, "ui.desktop.claude_constellation")
 echo 'awesome.restart()' | awesome-client
 ```
 
-### Écran de verrouillage animé (xsecurelock)
+### Animated lock screen (xsecurelock)
 
-`lock()` verrouille l'écran sur la constellation animée via [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`) : `saver.lua` (Lua 5.4 + lgi) dessine dans la fenêtre de verrouillage avec le même moteur (`render.lua`) que le fond d'écran, en mode privé (pas de chemins, commandes ni outil en cours, l'écran verrouillé étant visible par tous) et avec la même règle batterie. xsecurelock garde la main sur l'authentification : si le saver plante, l'écran reste verrouillé. Sans xsecurelock, `lock()` retombe sur une image fixe pour i3lock (`snapshot(path, private)`).
+`lock()` locks the screen on the animated constellation through [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`): `saver.lua` (Lua 5.4 + lgi) draws into the lock window with the same engine (`render.lua`) as the wallpaper, in private mode (no paths, commands or current tool, since anyone can see a locked screen) and with the same battery rule. xsecurelock stays in charge of authentication: if the saver crashes, the screen stays locked. Without xsecurelock, `lock()` falls back to a still image for i3lock (`snapshot(path, private)`).
 
-![Écran de verrouillage : même constellation, sans libellés](docs/lock.gif)
+![Lock screen: the same constellation, without labels](docs/lock.gif)
 
 ```lua
 awful.key({ modkey }, "l", function()
@@ -39,10 +39,10 @@ awful.key({ modkey }, "l", function()
 end)
 ```
 
-Les couleurs du thème Awesome sont écrites dans `~/.cache/claude-constellation/theme.json` pour que le saver, qui tourne hors d'Awesome, utilise la même palette.
+The Awesome theme colours are written to `~/.cache/claude-constellation/theme.json` so the saver, which runs outside Awesome, uses the same palette.
 
-Pour désinstaller : `node install.js --uninstall`, puis retirer la ligne ajoutée dans `rc.lua`.
+To uninstall: `node install.js --uninstall`, then remove the line added to `rc.lua`.
 
-## Démos
+## Demos
 
-Les GIF de `docs/` sont rendus hors-ligne par le vrai moteur (`render.lua`) sur des sessions fictives et une horloge simulée : `demo/record.sh` (lua5.4, lgi, ffmpeg) les régénère sans toucher à `~/.claude`. Le scénario est dans `demo/record.lua`.
+The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
