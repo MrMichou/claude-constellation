@@ -23,4 +23,20 @@ node install.js            # hooks dans ~/.claude/settings.json + symlink du mod
 echo 'awesome.restart()' | awesome-client
 ```
 
+### Écran de verrouillage (i3lock)
+
+i3lock couvre tout l'écran, donc pas d'animation possible, mais on peut verrouiller sur une image de la constellation. `snapshot(path, private)` rend l'image à la taille de l'écran racine ; avec `private = true`, les libellés (chemins, commandes) et l'outil en cours sont masqués, puisque l'écran verrouillé est visible par tous :
+
+```lua
+awful.key({ modkey }, "l", function()
+  local cmd = { "i3lock", "-c", "000000" }
+  local img = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/constellation-lock.png"
+  local ok, cc = pcall(require, "ui.desktop.claude_constellation")
+  if ok and cc.snapshot and cc.snapshot(img, true) then
+    table.insert(cmd, "-i"); table.insert(cmd, img)
+  end
+  awful.spawn(cmd)
+end)
+```
+
 Pour désinstaller : `node install.js --uninstall`, puis retirer la ligne ajoutée dans `rc.lua`.

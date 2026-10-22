@@ -195,7 +195,8 @@ end
 local ON_BATTERY = "static"
 local static = false
 
-local function draw(cr, w, h)
+-- `private` drops what could leak on a lock screen: satellite labels and the current tool target.
+local function draw(cr, w, h, private)
   local t = now()
   local ta = static and 0 or t -- animation clock; frozen while static
   local ease = static and 1 or 0.05
@@ -239,7 +240,8 @@ local function draw(cr, w, h)
       glow(cr, sx, sy, 9, kc, 0.8 * fade * A)
       set(cr, kc, fade * A); cr:arc(sx, sy, 2.2, 0, 2 * math.pi); cr:fill()
       local right = math.cos(sa) >= 0
-      if right then
+      if private then -- dot only, no path/command label
+      elseif right then
         text(cr, sat.target or "", sx + 8, sy + 4, 11, C.dim, 0.75 * fade * A)
       else
         cr:set_font_size(11)
@@ -275,7 +277,7 @@ local function draw(cr, w, h)
 
     text(cr, s.project ~= "" and s.project or sid:sub(1, 8), s.x, s.y - 52, 14, C.fg, 0.9 * A, true)
     local sub = s.state or ""
-    if s.state == "tool" and s.target and s.target ~= "" then
+    if s.state == "tool" and s.target and s.target ~= "" and not private then
       sub = (s.tool or "") .. " · " .. s.target
     end
     text(cr, sub, s.x, s.y + 62, 11, col, 0.8 * A, true)
@@ -364,7 +366,26 @@ gears.timer {
   end,
 }
 
+-- Render one frame into a root-sized PNG (the constellation on the primary screen, black
+-- elsewhere), e.g. as an i3lock image: `i3lock -c 000000 -i <path>`. Returns true on success.
+local function snapshot(path, private)
+  local ok = pcall(function()
+    local rw, rh = root.size()
+    local g = screen.primary.geometry
+    local surf = lgi.cairo.ImageSurface.create(lgi.cairo.Format.RGB24, rw, rh)
+    local cr = lgi.cairo.Context(surf)
+    cr:set_source_rgb(0, 0, 0); cr:paint()
+    cr:translate(g.x, g.y)
+    cr:rectangle(0, 0, g.width, g.height); cr:clip()
+    draw(cr, g.width, g.height, private)
+    assert(surf:write_to_png(path) == "SUCCESS")
+    surf:finish()
+  end)
+  return ok
+end
+
 return {
+  snapshot = snapshot,
   toggle = function()
     user_hidden = not user_hidden
     if box then box.visible = not user_hidden end
