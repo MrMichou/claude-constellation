@@ -23,7 +23,8 @@ local LINK_WINDOW = 30 * 60 -- two sessions using one resource within this windo
 -- agent type ("Explore ×12"), and past RUNNERS_MAX groups the smallest merge into "+k agents".
 local RUNNERS_MAX = 6
 local AGENT_FADE = 20 -- seconds a finished subagent stays (birthday, then fading out)
-local MINI_SIZE = 34
+local MINI_SIZE = 38
+local RUN_TILT = 0.2 -- rad a runner leans towards where it is heading
 local RUN_ORBIT_X, RUN_ORBIT_Y = 200, 140 -- outside the satellites
 local RUN_SPEED = { tool = 0.35, thinking = 0.15 } -- rad/s of the ring
 local CATCH_UP = 0.5 -- extra rad/s a runner gains back after standing still
@@ -41,10 +42,7 @@ local CLAWD = {
   done = "clawd/birthday",
   sleeping = "clawd/sleeping",
   rest = "crab",
-  walk = "clawd/walk",
 }
--- clawd/walk turns around first (cells 1-15); cells 16-23 are the stepping loop, facing right.
-local WALK_FIRST, WALK_LAST = 16, 23
 
 local R = { FPS_ACTIVE = 30, FPS_IDLE = 8 }
 
@@ -375,14 +373,16 @@ local function emote(s, t, stale)
   return CLAWD.rest, false
 end
 
--- size defaults to SPRITE_SIZE; flip mirrors the sprite horizontally.
-local function draw_sprite(cr, cells, idx, x, y, a, size, flip)
+-- size defaults to SPRITE_SIZE; tilt rotates the sprite around its centre (rad, clockwise).
+local function draw_sprite(cr, cells, idx, x, y, a, size, tilt)
   local cell = cells[(idx % #cells) + 1]
   local w, h = cell:get_width(), cell:get_height()
   local k = (size or SPRITE_SIZE) / math.max(w, h)
   cr:save()
-  cr:translate(x - w * k / 2, y - h * k / 2)
-  if flip then cr:translate(w * k, 0); cr:scale(-k, k) else cr:scale(k, k) end
+  cr:translate(x, y)
+  if tilt then cr:rotate(tilt) end
+  cr:translate(-w * k / 2, -h * k / 2)
+  cr:scale(k, k)
   cr:set_source_surface(cell, 0, 0)
   cr:get_source():set_filter(cairo.Filter.NEAREST) -- keep the pixel art crisp
   cr:paint_with_alpha(a)
@@ -474,16 +474,6 @@ local function draw_links(cr, t, ta, static, private)
   end
 end
 
--- The walk loop of clawd/walk, or {} when the strip is missing or too short.
-local walk_cache
-local function walk_cells()
-  if walk_cache then return walk_cache end
-  local all, cells = sprite_set(CLAWD.walk), {}
-  for k = WALK_FIRST, math.min(WALK_LAST, #all) do cells[#cells + 1] = all[k] end
-  walk_cache = cells
-  return cells
-end
-
 local function runner_color(r)
   if r.state == "tool" then return C.kind[r.kind] or C.kind.agent end
   if r.state == "permission" or r.state == "waiting" then return C.permission end
@@ -494,8 +484,9 @@ end
 -- Mini Clawds circling session s like a merry-go-round: the ring turns at the pace of its
 -- busiest runner and each runner eases into an evenly spaced slot. A runner that stands still
 -- (permission, done) falls behind the ring, then catches up running once it moves again.
--- Runners run during a tool call, walk while thinking, listen (blinking) on a permission,
--- and party then fade out once done.
+-- Runners are the front-facing walking crab: running (fast steps, bouncing, leaning where they
+-- head) during a tool call, walking while thinking; they listen (blinking) on a permission and
+-- party then fade out once done.
 local function draw_runners(cr, s, t, ta, static, private, A)
   local list = R.runners(s, t)
   s._run = s._run or {}
@@ -550,7 +541,7 @@ local function draw_runners(cr, s, t, ta, static, private, A)
 
     local cells, idx, fps
     if r.state == "tool" or r.state == "thinking" then
-      cells, fps = walk_cells(), running and 22 or 10
+      cells, fps = sprite_set(CLAWD.rest), running and 24 or 10
     elseif r.state == "done" then
       cells, fps = sprite_set(CLAWD.done), SPRITE_FPS
     else
@@ -558,8 +549,9 @@ local function draw_runners(cr, s, t, ta, static, private, A)
     end
     idx = math.floor(t * fps + i * 5)
     if #cells > 0 then
-      -- The walk loop faces right; moving left on the far side of the orbit, so mirror it.
-      draw_sprite(cr, cells, idx, x, y, RA, MINI_SIZE, math.sin(p.a) > 0)
+      -- Heading right on the top half of the orbit, left on the bottom half.
+      local tilt = running and RUN_TILT * (math.sin(p.a) > 0 and -1 or 1) or nil
+      draw_sprite(cr, cells, idx, x, y, RA, MINI_SIZE, tilt)
     else
       set(cr, col, RA); cr:arc(x, y, 3.5, 0, 2 * math.pi); cr:fill()
     end
