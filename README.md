@@ -2,6 +2,8 @@
 
 Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaît comme un nœud lumineux. Les ressources qu'elle manipule (fichiers, commandes shell, recherches, web, serveurs MCP, subagents) gravitent autour d'elle.
 
+![Quatre sessions Claude Code : outils en cours, permission en attente, session endormie](docs/constellation.gif)
+
 - **Nœud** : pulse selon l'état de la session. Bleu accent pour `thinking`, couleur du type d'outil pour `tool`, jaune clignotant pour une permission en attente, gris pour `done`/`idle`. La session est atténuée après 10 min d'inactivité et masquée après 3 h.
 - **Emote Clawd** : comme dans [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), chaque nœud affiche un crabe animé selon l'état : *thinking*, *typing* pendant un outil, *listening* en attente de permission, *birthday* pendant 30 s après la fin d'un tour, *sleeping* quand la session est inactive. Artwork : [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
 - **Satellites** : les 10 dernières cibles de la session. Leur lien s'estompe sur 5 min, et une impulsion parcourt le lien à chaque appel d'outil.
@@ -28,6 +30,8 @@ echo 'awesome.restart()' | awesome-client
 
 `lock()` verrouille l'écran sur la constellation animée via [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`) : `saver.lua` (Lua 5.4 + lgi) dessine dans la fenêtre de verrouillage avec le même moteur (`render.lua`) que le fond d'écran, en mode privé (pas de chemins, commandes ni outil en cours, l'écran verrouillé étant visible par tous) et avec la même règle batterie. xsecurelock garde la main sur l'authentification : si le saver plante, l'écran reste verrouillé. Sans xsecurelock, `lock()` retombe sur une image fixe pour i3lock (`snapshot(path, private)`).
 
+![Écran de verrouillage : même constellation, sans libellés](docs/lock.gif)
+
 ```lua
 awful.key({ modkey }, "l", function()
   local ok, cc = pcall(require, "ui.desktop.claude_constellation")
@@ -38,3 +42,7 @@ end)
 Les couleurs du thème Awesome sont écrites dans `~/.cache/claude-constellation/theme.json` pour que le saver, qui tourne hors d'Awesome, utilise la même palette.
 
 Pour désinstaller : `node install.js --uninstall`, puis retirer la ligne ajoutée dans `rc.lua`.
+
+## Démos
+
+Les GIF de `docs/` sont rendus hors-ligne par le vrai moteur (`render.lua`) sur des sessions fictives et une horloge simulée : `demo/record.sh` (lua5.4, lgi, ffmpeg) les régénère sans toucher à `~/.claude`. Le scénario est dans `demo/record.lua`.
