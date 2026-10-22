@@ -2,6 +2,7 @@
 // Installs claude-constellation:
 //  - merges the tracking hooks into ~/.claude/settings.json (idempotent, backup kept)
 //  - symlinks the AwesomeWM module to ~/.config/awesome/ui/desktop/claude_constellation
+//  - symlinks the `constellation-layout` command to ~/.local/bin
 // Usage: node install.js [--uninstall]
 
 const fs = require("fs");
@@ -14,8 +15,11 @@ const track = path.join(__dirname, "hooks", "track.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const linkDir = path.join(home, ".config", "awesome", "ui", "desktop");
 const link = path.join(linkDir, "claude_constellation");
+const cmd = path.join(__dirname, "bin", "constellation-layout");
+const cmdLink = path.join(home, ".local", "bin", "constellation-layout");
 
 const EVENTS = {
+  SessionStart: "start",
   UserPromptSubmit: "prompt",
   PreToolUse: "pre",
   PostToolUse: "post",
@@ -62,4 +66,19 @@ if (!uninstall) {
   fs.symlinkSync(path.join(__dirname, "awesome", "claude_constellation"), link);
   console.log(`Linked ${link}`);
   console.log('Add to rc.lua: pcall(require, "ui.desktop.claude_constellation")');
+}
+
+// The command link is only replaced or removed when it is ours: never clobber another tool.
+let cmdTarget = null;
+try { cmdTarget = fs.readlinkSync(cmdLink); } catch {}
+const cmdFree = !fs.existsSync(cmdLink) && cmdTarget === null;
+if (cmdTarget === cmd) fs.rmSync(cmdLink, { force: true });
+if (!uninstall) {
+  if (cmdFree || cmdTarget === cmd) {
+    fs.mkdirSync(path.dirname(cmdLink), { recursive: true });
+    fs.symlinkSync(cmd, cmdLink);
+    console.log(`Linked ${cmdLink} (switch layouts: constellation-layout [next|lanes|cards|...])`);
+  } else {
+    console.log(`Skipped ${cmdLink}: it already exists and is not ours`);
+  }
 }

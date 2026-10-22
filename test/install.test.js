@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { tmpHome, runNode, readJson, exists, INSTALL, TRACK, ROOT } from "./helpers.js";
 
-const EVENTS = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
   "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 
 describe("install.js", () => {
@@ -76,6 +76,25 @@ describe("install.js", () => {
   it("links the Awesome module into ~/.config/awesome", async () => {
     await install();
     expect(fs.realpathSync(link())).toBe(path.join(ROOT, "awesome", "claude_constellation"));
+  });
+
+  const cmdLink = () => path.join(h.home, ".local", "bin", "constellation-layout");
+
+  it("links the constellation-layout command into ~/.local/bin, and removes it", async () => {
+    await install();
+    await install(); // idempotent
+    expect(fs.readlinkSync(cmdLink())).toBe(path.join(ROOT, "bin", "constellation-layout"));
+    await install("--uninstall");
+    expect(exists(cmdLink())).toBe(false);
+  });
+
+  it("leaves an unrelated constellation-layout command alone", async () => {
+    fs.mkdirSync(path.dirname(cmdLink()), { recursive: true });
+    fs.writeFileSync(cmdLink(), "#!/bin/sh\n");
+    await install();
+    expect(fs.lstatSync(cmdLink()).isSymbolicLink()).toBe(false);
+    await install("--uninstall");
+    expect(fs.readFileSync(cmdLink(), "utf8")).toBe("#!/bin/sh\n");
   });
 
   it("--uninstall removes only its own hooks and the link", async () => {

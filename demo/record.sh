@@ -24,4 +24,5 @@ only="$*"
 record constellation wallpaper 15 12 960
 record lock lock 15 8 800
 record subagents wallpaper 12 20 800 workflow
+record layouts layouts 15 20 960
 ls -la "$out"

@@ -50,6 +50,17 @@ function H.session(dir, sid, fields)
   H.write(dir .. sid .. ".json", H.encode(s))
 end
 
+-- Claude Code registry entry (<registry>/<pid>.json) plus a matching fake /proc/<pid>/stat;
+-- `fields` override the defaults.
+function H.registry(registry, proc, pid, fields, comm)
+  local r = { pid = pid, sessionId = "sid" .. pid, cwd = "/home/me/proj" .. pid,
+    kind = "interactive", status = "idle", procStart = "12345", updatedAt = os.time() * 1000 }
+  for k, v in pairs(fields or {}) do r[k] = v end
+  H.write(registry .. pid .. ".json", H.encode(r))
+  H.write(proc .. pid .. "/stat", ("%d (%s) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 12345 0\n")
+    :format(pid, comm or "claude"))
+end
+
 -- Fake /sys/class/power_supply entry.
 function H.supply(dir, name, files)
   for k, v in pairs(files) do H.write(dir .. name .. "/" .. k, v .. "\n") end

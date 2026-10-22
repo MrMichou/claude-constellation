@@ -6,7 +6,7 @@
 // each other's updates. Never fails the hook.
 // Subagents (SubagentStart/Stop, and tool events carrying agent_id) are tracked per session
 // under `agents`, so the renderer can draw them as mini nodes around their session.
-// Usage: node track.js <prompt|pre|post|notify|permreq|stop|substart|substop|end>
+// Usage: node track.js <start|prompt|pre|post|notify|permreq|stop|substart|substop|end>
 
 const fs = require("fs");
 const os = require("os");
@@ -26,6 +26,8 @@ const PENDING_TTL = 600;
 const INTERNAL_TOOLS = new Set(["SubagentHandback"]);
 const LOCK_WAIT = 3000; // ms to wait for the lock before writing anyway
 const LOCK_STALE = 2000; // ms after which a lock left by a killed hook is broken
+const TIMELINE_TTL = 1800; // seconds of tool calls kept for the swimlanes layout
+const TIMELINE_MAX = 200;
 
 function shortPath(f) {
   if (!f) return "";
@@ -192,7 +194,7 @@ function withLock(file, fn) {
   }
 }
 
-const EVENTS = new Set(["prompt", "pre", "post", "notify", "permreq", "stop", "substart", "substop", "end"]);
+const EVENTS = new Set(["start", "prompt", "pre", "post", "notify", "permreq", "stop", "substart", "substop", "end"]);
 
 function run(event, p) {
   const sid = cleanId(p.session_id);
@@ -223,9 +225,10 @@ function update(event, p, sid, file) {
     agents: prev.agents || {},
     pending: (prev.pending || []).filter((q) => now - q.ts < PENDING_TTL),
     since: prev.since || now, // when the session's own state last changed
+    // Tool calls as { k: kind, s: start, e: end }; `e` is missing while the call runs.
+    timeline: prev.timeline || [],
     ts: now,
   };
-
   // A subagent's events update its mini node, never the session's own state; the files it
   // touches still count for links with other sessions.
   if (event === "substart" || event === "substop" || (p.agent_id && event !== "prompt" && event !== "stop")) {
@@ -235,8 +238,14 @@ function update(event, p, sid, file) {
     return write(file, s);
   }
 
+  // The running call ends with its post, the next call or the turn (the session's own, not a
+  // subagent's); a permission prompt or a notification happens during the call, so it stays open.
+  const open = s.timeline.at(-1);
+  if (open && open.e === undefined && !["permreq", "notify"].includes(event)) open.e = now;
+
   const before = s.state;
   switch (event) {
+    case "start": break; // registers the session as idle so it shows before its first prompt
     case "prompt": s.state = "thinking"; break;
     case "pre": {
       const t = p.tool_name || "";
@@ -244,6 +253,8 @@ function update(event, p, sid, file) {
       Object.assign(s, { state: "tool", tool: t, kind: d.kind, target: d.target });
       s.history.push({ tool: t, kind: d.kind, target: d.target, ts: now });
       s.history = s.history.slice(-HISTORY_MAX);
+      s.timeline.push({ k: d.kind, s: now });
+      s.timeline = s.timeline.filter((e) => now - e.s < TIMELINE_TTL).slice(-TIMELINE_MAX);
       addLinks(s, t, p.tool_input, now);
       if (t === "Agent" || t === "Task") {
         const i = p.tool_input || {};
