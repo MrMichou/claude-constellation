@@ -3,6 +3,7 @@
 Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaît comme un nœud lumineux. Les ressources qu'elle manipule (fichiers, commandes shell, recherches, web, serveurs MCP, subagents) gravitent autour d'elle.
 
 - **Nœud** : pulse selon l'état de la session. Bleu accent pour `thinking`, couleur du type d'outil pour `tool`, jaune clignotant pour une permission en attente, gris pour `done`/`idle`. La session est atténuée après 10 min d'inactivité et masquée après 3 h.
+- **Emote Clawd** : comme dans [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), chaque nœud affiche un crabe animé selon l'état : *thinking*, *typing* pendant un outil, *listening* en attente de permission, *birthday* pendant 30 s après la fin d'un tour, *sleeping* quand la session est inactive. Artwork : [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
 - **Satellites** : les 10 dernières cibles de la session. Leur lien s'estompe sur 5 min, et une impulsion parcourt le lien à chaque appel d'outil.
 - **Couleurs par type** : file = bleu, shell = vert, search = cyan, web = magenta, agent = jaune, mcp = rouge.
 

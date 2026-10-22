@@ -17,7 +17,23 @@ local STALE_AFTER = 10 * 60 -- seconds without activity -> dimmed
 local HIDE_AFTER = 3 * 3600 -- seconds without activity -> hidden (crashed session)
 local FADE_LINK = 5 * 60 -- a satellite link fades out over this many seconds
 local PARTICLE_TIME = 1.4 -- seconds for a pulse to travel session -> target
-local FPS_ACTIVE, FPS_IDLE = 30, 4
+local FPS_ACTIVE, FPS_IDLE = 30, 8
+local DONE_PARTY = 30 -- seconds the "birthday" emote plays after a turn ends
+
+-- Clawd emotes (same sprite strips as claude-status-bar): one loop per session state.
+-- Artwork from github.com/xixicc186/clawd-emotes-skill.
+local SPRITE_FPS = 14
+local SPRITE_SIZE = 64
+local CLAWD = {
+  thinking = "clawd/thinking",
+  tool = "clawd/typing",
+  permission = "clawd/listening",
+  waiting = "clawd/listening",
+  done = "clawd/birthday",
+  sleeping = "clawd/sleeping",
+  rest = "crab",
+}
+local FRAMES_DIR = (debug.getinfo(1, "S").source:match("^@(.*/)") or "./") .. "frames/"
 
 local function rgb(hex, fallback)
   local r, g, b = gears.color.parse_color(hex or fallback or "#ffffff")
@@ -45,6 +61,37 @@ local C = {
 local function now() return GLib.get_real_time() / 1e6 end
 
 local function set(cr, c, a) cr:set_source_rgba(c[1], c[2], c[3], a or 1) end
+
+-- Sprite manifest: each set is one horizontal strip of `n` square-ish cells.
+local manifest = (function()
+  local f = io.open(FRAMES_DIR .. "sprites.json", "r")
+  if not f then return {} end
+  local t = json.decode(f:read("*a") or ""); f:close()
+  return type(t) == "table" and t or {}
+end)()
+
+-- Strips are decoded lazily and memoised; {} when a set is missing (falls back to a dot).
+local sprite_cache = {}
+local function sprite_set(name)
+  local set = sprite_cache[name]
+  if set then return set end
+  set = {}
+  local n = math.floor(tonumber(manifest[name]) or 0)
+  local sheet, err = gears.surface.load_uncached_silently(FRAMES_DIR .. name .. ".png")
+  if n > 0 and sheet and not err then
+    local w, h = math.floor(sheet:get_width() / n), sheet:get_height()
+    for i = 0, n - 1 do
+      local cell = lgi.cairo.ImageSurface.create(lgi.cairo.Format.ARGB32, w, h)
+      local c = lgi.cairo.Context(cell)
+      c:set_source_surface(sheet, -i * w, 0)
+      c:paint()
+      set[#set + 1] = cell
+    end
+    sheet:finish()
+  end
+  sprite_cache[name] = set
+  return set
+end
 
 -- sessions[sid] = decoded state file + layout fields (x, y, alpha)
 local sessions = {}
@@ -105,8 +152,29 @@ local function node_color(s)
   return C.dim
 end
 
+-- Emote for a session's state, plus whether it loops (the resting crab is a still pose).
+local function emote(s, t, stale)
+  if is_active(s) or s.state == "waiting" then return CLAWD[s.state], true end
+  if stale then return CLAWD.sleeping, true end
+  if s.state == "done" and t - (tonumber(s.ts) or 0) < DONE_PARTY then return CLAWD.done, true end
+  return CLAWD.rest, false
+end
+
+local function draw_sprite(cr, set, idx, x, y, a)
+  local cell = set[(idx % #set) + 1]
+  local w, h = cell:get_width(), cell:get_height()
+  local k = SPRITE_SIZE / math.max(w, h)
+  cr:save()
+  cr:translate(x - w * k / 2, y - h * k / 2)
+  cr:scale(k, k)
+  cr:set_source_surface(cell, 0, 0)
+  cr:get_source():set_filter(lgi.cairo.Filter.NEAREST) -- keep the pixel art crisp
+  cr:paint_with_alpha(a)
+  cr:restore()
+end
+
 local function glow(cr, x, y, r, c, a)
-  local pat = lgi.cairo.RadialGradient(x, y, 0, x, y, r)
+  local pat = lgi.cairo.Pattern.create_radial(x, y, 0, x, y, r)
   pat:add_color_stop_rgba(0, c[1], c[2], c[3], a)
   pat:add_color_stop_rgba(0.35, c[1], c[2], c[3], a * 0.35)
   pat:add_color_stop_rgba(1, c[1], c[2], c[3], 0)
@@ -189,7 +257,14 @@ local function draw(cr, w, h)
     elseif s.state == "waiting" then pulse = 0.5 + 0.5 * math.sin(t * 1.5)
     else pulse = 0.25 end
     glow(cr, s.x, s.y, 40 + 18 * pulse, col, (0.35 + 0.4 * pulse) * A)
-    set(cr, col, A); cr:arc(s.x, s.y, 5, 0, 2 * math.pi); cr:fill()
+    -- Clawd emote on top of the glow, desynced per session; a plain dot if sprites are missing.
+    local name, loops = emote(s, t, stale)
+    local frames = sprite_set(name)
+    if #frames > 0 then
+      draw_sprite(cr, frames, loops and math.floor(t * SPRITE_FPS + i * 7) or 0, s.x, s.y, A)
+    else
+      set(cr, col, A); cr:arc(s.x, s.y, 5, 0, 2 * math.pi); cr:fill()
+    end
 
     text(cr, s.project ~= "" and s.project or sid:sub(1, 8), s.x, s.y - 52, 14, C.fg, 0.9 * A, true)
     local sub = s.state or ""
