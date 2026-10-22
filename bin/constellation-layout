@@ -1,0 +1,18 @@
+#!/bin/sh
+# Switch the claude-constellation layout in the running AwesomeWM.
+# Usage: constellation-layout [next|prev|constellation|lanes|cards|resources]   (default: next)
+set -eu
+case "${1:-next}" in
+  -h|--help) sed -n '2,3s/^# //p' "$0"; exit 0 ;;
+  next|prev|constellation|lanes|cards|resources) want="${1:-next}" ;;
+  *) echo "constellation-layout: unknown layout '$1'" >&2; sed -n '3s/^# //p' "$0" >&2; exit 2 ;;
+esac
+out=$(awesome-client "local ok, cc = pcall(require, 'ui.desktop.claude_constellation')
+  if not ok or not cc.set_layout then return 'error: module not loaded' end
+  return cc.set_layout('$want')")
+# awesome-client prints e.g.:   string "cards"
+layout=$(printf '%s\n' "$out" | sed -n 's/.*string "\(.*\)".*/\1/p')
+case "$layout" in
+  ""|error:*) echo "constellation-layout: ${layout:-no answer from awesome-client}" >&2; exit 1 ;;
+  *) echo "$layout" ;;
+esac

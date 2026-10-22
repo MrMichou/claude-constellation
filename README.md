@@ -10,11 +10,32 @@ Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a
 - **Links between sessions**: two sessions that used the same resource within the last half hour are joined by a labelled curve ("⇄ tmux 0", "⇄ deploy.yml") with a glow running along it. Recognised resources: the same file (Read/Edit/Write), or the same tmux session driven via `tmux … -t <target>` (including `-t $P` with `P=0:0`, or a `for p in 0:0.0 0:0.1` loop). On the lock screen, only "tmux" / "file" is shown.
 - **Colours by kind**: file = blue, shell = green, search = cyan, web = magenta, agent = yellow, mcp = red.
 
+## Layouts
+
+The same sessions can be shown four ways; nodes glide to their new place when you switch.
+
+![The four layouts: constellation, swimlanes, cards, resources](docs/layouts.gif)
+
+- **constellation** (default): the view described above.
+- **lanes**: one lane per session with its tool calls over the last 20 minutes, coloured by kind: parallel work, idle gaps and how long a session has been waiting for you.
+- **cards**: a grid of cards (state, running tool, last targets) and a summary tile; stays readable with many sessions.
+- **resources**: files, commands and tmux sessions in the middle, sessions around them; a resource used by several sessions sits between them.
+
+Switch with `constellation-layout [next|prev|constellation|lanes|cards|resources]` (linked into `~/.local/bin` by `install.js`), or from a key binding:
+
+```lua
+awful.key({ modkey, "Shift" }, "c", function()
+  require("ui.desktop.claude_constellation").set_layout("next")
+end)
+```
+
+The choice is kept in `~/.cache/claude-constellation/layout` and also applies to the lock screen, where every layout hides paths and commands.
+
 ## How it works
 
-- `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history) and deletes the file on `SessionEnd`.
+- `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls) and deletes the file on `SessionEnd`.
 - **Sessions already open**: `render.lua` also reads Claude Code's internal registry (`~/.claude/sessions/<pid>.json`) to show, idle, live sessions that have no hook file yet (opened before the install, or with no activity). The process must exist and its start time must match. Undocumented format: at worst these sessions don't show up, and the hooks stay the main source.
-- `awesome/claude_constellation/` is the Lua module: `render.lua` draws (cairo, no Awesome dependency), `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
+- `awesome/claude_constellation/` is the Lua module: `render.lua` reads the sessions and draws them (cairo, no Awesome dependency) through one of the `layouts/`, `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
 - **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
@@ -46,7 +67,7 @@ To uninstall: `node install.js --uninstall`, then remove the line added to `rc.l
 
 ## Demos
 
-The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
+The GIFs in `docs/` (including the layouts one) are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
 
 ## Tests
 

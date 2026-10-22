@@ -22,6 +22,18 @@ describe("track.js hook", () => {
     expect(state()).toMatchObject({ sid: "s1", project: "my-proj", state: "idle", history: [] });
   });
 
+  it("start on a resumed session keeps its state, history and timeline", async () => {
+    await pre("Read", { file_path: "/a.txt" });
+    await hook("stop", { session_id: "s1" });
+    const before = state();
+    await hook("start", { session_id: "s1" }); // resume: no cwd in the payload
+    const after = state();
+    expect(after).toMatchObject({ project: "proj", state: "done" });
+    expect(after.history).toEqual(before.history);
+    expect(after.timeline).toEqual(before.timeline);
+    expect(after.ts).toBeGreaterThanOrEqual(before.ts);
+  });
+
   it("prompt marks the session as thinking and records the project", async () => {
     const r = await hook("prompt", { session_id: "s1", cwd: "/work/my-proj" });
     expect(r.code).toBe(0);
@@ -42,6 +54,35 @@ describe("track.js hook", () => {
     expect(hist).toHaveLength(10);
     expect(hist[0].target).toBe("p2");
     expect(hist[9].target).toBe("p11");
+  });
+
+  it("records each call on the timeline and closes it on post or the next call", async () => {
+    await pre("Read", { file_path: "/a.txt" });
+    expect(state().timeline).toHaveLength(1);
+    expect(state().timeline[0].e).toBeUndefined();
+    await hook("post", { session_id: "s1" });
+    await pre("Bash", { command: "ls" });
+    await pre("Grep", { pattern: "x" });
+    const tl = state().timeline;
+    expect(tl.map((e) => e.k)).toEqual(["file", "shell", "search"]);
+    for (const e of tl.slice(0, 2)) expect(e.e).toBeGreaterThanOrEqual(e.s);
+    expect(tl[2].e).toBeUndefined();
+  });
+
+  it("keeps a call open while it waits for a permission", async () => {
+    await pre("Bash", { command: "rm -rf build" });
+    await hook("permreq", { session_id: "s1" });
+    expect(state().timeline[0].e).toBeUndefined();
+    await hook("stop", { session_id: "s1" });
+    expect(state().timeline[0].e).toBeGreaterThanOrEqual(state().timeline[0].s);
+  });
+
+  it("drops timeline entries older than 30 minutes", async () => {
+    const old = Date.now() / 1000 - 31 * 60;
+    fs.mkdirSync(h.dataDir, { recursive: true });
+    fs.writeFileSync(stateFile("s1"), JSON.stringify({ timeline: [{ k: "file", s: old, e: old + 1 }] }));
+    await pre("Bash", { command: "ls" });
+    expect(state().timeline.map((e) => e.k)).toEqual(["shell"]);
   });
 
   it("post goes back to thinking and keeps tool fields", async () => {

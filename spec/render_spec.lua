@@ -132,6 +132,41 @@ describe("render.lua", function()
       assert.is_false(rec.has_text("hook-name"))
     end)
 
+    it("drops a session once its process exits", function()
+      H.registry(registry, proc, 4242, { sessionId = "r1", cwd = "/x/short-lived" })
+      assert.are.same({ false, 1 }, { R.read_sessions() })
+      H.rmrf(proc .. "4242")
+      assert.are.same({ false, 0 }, { R.read_sessions() })
+      assert.is_false(draw().has_text("short-lived"))
+    end)
+
+    it("follows an entry rewritten from idle to busy", function()
+      H.registry(registry, proc, 4242, { sessionId = "r1" })
+      assert.is_false(R.read_sessions())
+      GLib.usleep(10000)
+      H.registry(registry, proc, 4242, { sessionId = "r1", status = "busy" })
+      assert.is_true(R.read_sessions())
+      assert.is_true(draw().has_text("thinking"))
+    end)
+
+    it("skips corrupt and incomplete entries without failing", function()
+      H.write(registry .. "10.json", "{not json")
+      H.registry(registry, proc, 11, { sessionId = 42 })   -- not a string
+      H.registry(registry, proc, 12, { procStart = false }) -- no start time to check
+      H.write(registry .. "notes.txt", "hello")
+      H.registry(registry, proc, 13, { sessionId = "ok", cwd = "/x/valid" })
+      assert.are.same({ false, 1 }, { R.read_sessions() })
+      assert.is_true(draw().has_text("valid"))
+    end)
+
+    it("draws a registry-only session in every layout, named by its id without a cwd", function()
+      H.registry(registry, proc, 4242, { sessionId = "abcdef123456", cwd = "/" })
+      R.read_sessions()
+      for _, layout in ipairs(R.LAYOUTS) do
+        assert.is_true(draw({ layout = layout }).has_text("abcdef12"), layout)
+      end
+    end)
+
     it("parses process names holding spaces and parentheses", function()
       H.registry(registry, proc, 7, { sessionId = "r1", cwd = "/x/odd" }, "my (weird) proc")
       R.read_sessions()
@@ -319,7 +354,111 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("layouts", function()
+    local function link(kind, label) return { kind = kind, label = label, ts = os.time() } end
+    local now = os.time()
+
+    before_each(function()
+      local shared = { ["file:/w/ci/deploy.yml"] = link("file", "deploy.yml") }
+      H.session(data, "a", {
+        project = "api", state = "tool", tool = "Bash", kind = "shell", target = "cargo test",
+        links = shared,
+        history = {
+          { kind = "file", target = "…/ci/deploy.yml", ts = now },
+          { kind = "shell", target = "cargo test", ts = now },
+        },
+        timeline = { { k = "file", s = now - 300, e = now - 290 }, { k = "shell", s = now - 5 } },
+      })
+      H.session(data, "b", {
+        project = "infra", state = "permission", links = shared,
+        history = { { kind = "file", target = "…/ci/deploy.yml", ts = now } },
+      })
+      H.session(data, "c", { project = "docs", state = "waiting", ts = now - 240 })
+      H.session(data, "d", { project = "dots", state = "done", ts = now - 20 * 60 })
+      R.read_sessions()
+    end)
+
+    it("lists the four layouts, constellation first", function()
+      assert.are.same({ "constellation", "lanes", "cards", "resources" }, R.LAYOUTS)
+    end)
+
+    it("draws every layout, animated or static and private", function()
+      for _, layout in ipairs(R.LAYOUTS) do
+        local rec = draw({ layout = layout })
+        assert.is_true(rec.has_text("api"), layout)
+        assert.is_true(rec.has_text("infra"), layout)
+        assert.has_no.errors(function() draw({ layout = layout, static = true, private = true }) end)
+      end
+    end)
+
+    it("hides targets and commands in private mode, in every layout", function()
+      for _, layout in ipairs(R.LAYOUTS) do
+        local rec = draw({ layout = layout, private = true })
+        assert.is_nil(rec.text_matching("cargo"), layout)
+        assert.is_nil(rec.text_matching("deploy"), layout)
+      end
+    end)
+
+    it("falls back to the constellation for an unknown layout", function()
+      assert.are.same(draw().texts, draw({ layout = "nope" }).texts)
+    end)
+
+    it("lanes show how long a session has been waiting", function()
+      assert.is_true(draw({ layout = "lanes" }).has_text("waiting 4m"))
+    end)
+
+    it("cards add a summary tile in a free slot", function()
+      assert.is_nil(draw({ layout = "cards" }).text_matching("sessions$")) -- 2x2 grid, full
+      H.session(data, "e", { project = "web" })
+      R.read_sessions()
+      local rec = draw({ layout = "cards" })
+      assert.is_true(rec.has_text("5 sessions"))
+      assert.is_true(rec.has_text("1 awaiting permission"))
+    end)
+
+    it("resources put a shared file between its sessions", function()
+      local rec = draw({ layout = "resources" })
+      assert.is_true(rec.has_text("deploy.yml"))
+      assert.is_true(rec.has_text("⇄ 2 sessions"))
+    end)
+  end)
+
+  describe("chosen layout", function()
+    local cache
+    before_each(function()
+      cache = H.tmpdir()
+      R.set_cache_dir(cache)
+    end)
+    after_each(function() H.rmrf(cache) end)
+
+    it("defaults to the constellation", function()
+      assert.are.equal("constellation", R.read_layout())
+    end)
+
+    it("is remembered, and an unknown value falls back to the default", function()
+      assert.is_true(R.write_layout("cards"))
+      assert.are.equal("cards", R.read_layout())
+      H.write(cache .. "layout", "bogus\n")
+      assert.are.equal("constellation", R.read_layout())
+    end)
+  end)
+
   describe("with real cairo", function()
+    it("renders every layout", function()
+      H.session(data, "s1", { state = "tool", kind = "shell", target = "ls",
+        history = { { kind = "file", target = "a.txt", ts = os.time() } },
+        timeline = { { k = "shell", s = os.time() - 5 } } })
+      H.session(data, "s2", { state = "permission" })
+      R.read_sessions()
+      local surf = cairo.ImageSurface.create(cairo.Format.RGB24, 640, 360)
+      local cr = cairo.Context(surf)
+      for _, layout in ipairs(R.LAYOUTS) do
+        R.draw(cr, 640, 360, { layout = layout })
+        R.draw(cr, 640, 360, { layout = layout, static = true, private = true })
+        assert.are.equal("SUCCESS", cr.status, layout)
+      end
+    end)
+
     it("renders a frame with the palette background", function()
       R.set_palette({ bg = "#204060" })
       H.session(data, "s1", { state = "thinking" })

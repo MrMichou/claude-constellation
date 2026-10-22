@@ -18,8 +18,7 @@ local ON_BATTERY = "static"
 
 -- Theme colours; also written to THEME_FILE so the lock-screen saver (which runs outside
 -- Awesome) draws with the same palette.
-local THEME_FILE = (os.getenv("XDG_CACHE_HOME") or (os.getenv("HOME") .. "/.cache"))
-  .. "/claude-constellation/theme.json"
+local THEME_FILE = R.CACHE_DIR .. "theme.json"
 local palette = {
   bg = beautiful.black, fg = beautiful.xforeground, dim = beautiful.white,
   thinking = beautiful.accent or beautiful.blue, permission = beautiful.yellow,
@@ -34,12 +33,13 @@ pcall(function()
 end)
 
 local static = false
+local layout = R.read_layout() -- constellation, lanes, cards or resources; see set_layout()
 
 -- Animated surface: one desktop-type wibox on the primary screen, below every client.
 local canvas = wibox.widget.base.make_widget()
 function canvas:fit(_, width, height) return width, height end
 function canvas:draw(_, cr, width, height)
-  local ok, err = pcall(R.draw, cr, width, height, { static = static })
+  local ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout })
   if not ok then gears.debug.print_warning("claude_constellation: " .. tostring(err)) end
 end
 
@@ -106,7 +106,7 @@ local function snapshot(path, private)
     cr:set_source_rgb(0, 0, 0); cr:paint()
     cr:translate(g.x, g.y)
     cr:rectangle(0, 0, g.width, g.height); cr:clip()
-    R.draw(cr, g.width, g.height, { private = private, static = static })
+    R.draw(cr, g.width, g.height, { private = private, static = static, layout = layout })
     assert(surf:write_to_png(path) == "SUCCESS")
     surf:finish()
   end)
@@ -129,7 +129,27 @@ local function lock()
   awful.spawn(cmd)
 end
 
+-- Switch the presentation: a layout name, or "next" / "prev" to cycle through R.LAYOUTS.
+-- The choice is kept for the next start and for the lock screen. Returns the layout shown.
+local function set_layout(name)
+  local list, i = R.LAYOUTS, 1
+  for j, l in ipairs(list) do if l == layout then i = j end end
+  if name == "next" or name == nil then name = list[i % #list + 1]
+  elseif name == "prev" then name = list[(i - 2) % #list + 1] end
+  local known = false
+  for _, l in ipairs(list) do if l == name then known = true end end
+  if not known then return layout end
+  layout = name
+  R.write_layout(name)
+  canvas:emit_signal("widget::redraw_needed")
+  local ok, naughty = pcall(require, "naughty")
+  if ok then naughty.notify({ title = "Claude constellation", text = "Layout: " .. name, timeout = 2 }) end
+  return layout
+end
+
 return {
+  set_layout = set_layout,
+  layouts = R.LAYOUTS,
   lock = lock,
   snapshot = snapshot,
   toggle = function()

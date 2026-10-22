@@ -31,8 +31,8 @@ local GdkX11 = lgi.require("GdkX11", "3.0")
 local R = dofile(DIR .. "render.lua")
 
 -- Palette written by the Awesome module (init.lua); defaults if Awesome never ran it.
-R.set_palette(R.read_json((os.getenv("XDG_CACHE_HOME") or (os.getenv("HOME") .. "/.cache"))
-  .. "/claude-constellation/theme.json"))
+R.set_palette(R.read_json(R.CACHE_DIR .. "theme.json"))
+local layout = R.read_layout() -- the one chosen on the desktop
 
 Gtk.init()
 local display = Gdk.Display.get_default()
@@ -47,7 +47,7 @@ local function frame()
     buf, bw, bh = cairo.ImageSurface.create(cairo.Format.RGB24, w, h), w, h
     buf_cr = cairo.Context(buf)
   end
-  R.draw(buf_cr, w, h, { private = true, static = static })
+  R.draw(buf_cr, w, h, { private = true, static = static, layout = layout })
   local out = Gdk.cairo_create(win)
   out:set_source_surface(buf, 0, 0)
   out:paint()
