@@ -10,7 +10,7 @@ Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaî
 ## Fonctionnement
 
 - `hooks/track.js` est un hook Claude Code. Il écrit `~/.claude/constellation/<session_id>.json` (état, outil, cible, historique) et supprime le fichier à `SessionEnd`.
-- `awesome/claude_constellation/` est le module Lua. Il crée une wibox `type = "desktop"` sous toutes les fenêtres, sur l'écran principal, et dessine en Cairo. Il tourne à 30 fps quand une session travaille, à 8 fps sinon.
+- `awesome/claude_constellation/` est le module Lua : `render.lua` dessine (cairo, sans dépendance à Awesome), `init.lua` l'intègre à Awesome, `saver.lua` l'anime sur l'écran de verrouillage. Il crée une wibox `type = "desktop"` sous toutes les fenêtres, sur l'écran principal, et dessine en Cairo. Il tourne à 30 fps quand une session travaille, à 8 fps sinon.
 - **Sur batterie** (batterie système en `Discharging`), seuls les emotes Clawd restent animés : la dérive, la pulsation, les orbites et les impulsions sont figées, et le redessin est plafonné à 8 fps. Mettre `ON_BATTERY = "off"` dans `init.lua` pour masquer complètement la couche sur batterie.
 
 ## Installation
@@ -23,20 +23,17 @@ node install.js            # hooks dans ~/.claude/settings.json + symlink du mod
 echo 'awesome.restart()' | awesome-client
 ```
 
-### Écran de verrouillage (i3lock)
+### Écran de verrouillage animé (xsecurelock)
 
-i3lock couvre tout l'écran, donc pas d'animation possible, mais on peut verrouiller sur une image de la constellation. `snapshot(path, private)` rend l'image à la taille de l'écran racine ; avec `private = true`, les libellés (chemins, commandes) et l'outil en cours sont masqués, puisque l'écran verrouillé est visible par tous :
+`lock()` verrouille l'écran sur la constellation animée via [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`) : `saver.lua` (Lua 5.4 + lgi) dessine dans la fenêtre de verrouillage avec le même moteur (`render.lua`) que le fond d'écran, en mode privé (pas de chemins, commandes ni outil en cours, l'écran verrouillé étant visible par tous) et avec la même règle batterie. xsecurelock garde la main sur l'authentification : si le saver plante, l'écran reste verrouillé. Sans xsecurelock, `lock()` retombe sur une image fixe pour i3lock (`snapshot(path, private)`).
 
 ```lua
 awful.key({ modkey }, "l", function()
-  local cmd = { "i3lock", "-c", "000000" }
-  local img = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/constellation-lock.png"
   local ok, cc = pcall(require, "ui.desktop.claude_constellation")
-  if ok and cc.snapshot and cc.snapshot(img, true) then
-    table.insert(cmd, "-i"); table.insert(cmd, img)
-  end
-  awful.spawn(cmd)
+  if ok and cc.lock then cc.lock() else awful.spawn({ "i3lock", "-c", "000000" }) end
 end)
 ```
+
+Les couleurs du thème Awesome sont écrites dans `~/.cache/claude-constellation/theme.json` pour que le saver, qui tourne hors d'Awesome, utilise la même palette.
 
 Pour désinstaller : `node install.js --uninstall`, puis retirer la ligne ajoutée dans `rc.lua`.
