@@ -16,7 +16,8 @@ Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaî
 
 ```sh
 node install.js            # hooks dans ~/.claude/settings.json + symlink du module
-# puis dans ~/.config/awesome/rc.lua, après require("ui") :
+# puis dans ~/.config/awesome/rc.lua, après beautiful.init(...) mais AVANT require("ui")
+# (sinon la couche bureau recouvre la barre) :
 #   pcall(require, "ui.desktop.claude_constellation")
 echo 'awesome.restart()' | awesome-client
 ```
