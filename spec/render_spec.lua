@@ -132,6 +132,41 @@ describe("render.lua", function()
       assert.is_false(rec.has_text("hook-name"))
     end)
 
+    it("drops a session once its process exits", function()
+      H.registry(registry, proc, 4242, { sessionId = "r1", cwd = "/x/short-lived" })
+      assert.are.same({ false, 1 }, { R.read_sessions() })
+      H.rmrf(proc .. "4242")
+      assert.are.same({ false, 0 }, { R.read_sessions() })
+      assert.is_false(draw().has_text("short-lived"))
+    end)
+
+    it("follows an entry rewritten from idle to busy", function()
+      H.registry(registry, proc, 4242, { sessionId = "r1" })
+      assert.is_false(R.read_sessions())
+      GLib.usleep(10000)
+      H.registry(registry, proc, 4242, { sessionId = "r1", status = "busy" })
+      assert.is_true(R.read_sessions())
+      assert.is_true(draw().has_text("thinking"))
+    end)
+
+    it("skips corrupt and incomplete entries without failing", function()
+      H.write(registry .. "10.json", "{not json")
+      H.registry(registry, proc, 11, { sessionId = 42 })   -- not a string
+      H.registry(registry, proc, 12, { procStart = false }) -- no start time to check
+      H.write(registry .. "notes.txt", "hello")
+      H.registry(registry, proc, 13, { sessionId = "ok", cwd = "/x/valid" })
+      assert.are.same({ false, 1 }, { R.read_sessions() })
+      assert.is_true(draw().has_text("valid"))
+    end)
+
+    it("draws a registry-only session in every layout, named by its id without a cwd", function()
+      H.registry(registry, proc, 4242, { sessionId = "abcdef123456", cwd = "/" })
+      R.read_sessions()
+      for _, layout in ipairs(R.LAYOUTS) do
+        assert.is_true(draw({ layout = layout }).has_text("abcdef12"), layout)
+      end
+    end)
+
     it("parses process names holding spaces and parentheses", function()
       H.registry(registry, proc, 7, { sessionId = "r1", cwd = "/x/odd" }, "my (weird) proc")
       R.read_sessions()

@@ -22,6 +22,18 @@ describe("track.js hook", () => {
     expect(state()).toMatchObject({ sid: "s1", project: "my-proj", state: "idle", history: [] });
   });
 
+  it("start on a resumed session keeps its state, history and timeline", async () => {
+    await pre("Read", { file_path: "/a.txt" });
+    await hook("stop", { session_id: "s1" });
+    const before = state();
+    await hook("start", { session_id: "s1" }); // resume: no cwd in the payload
+    const after = state();
+    expect(after).toMatchObject({ project: "proj", state: "done" });
+    expect(after.history).toEqual(before.history);
+    expect(after.timeline).toEqual(before.timeline);
+    expect(after.ts).toBeGreaterThanOrEqual(before.ts);
+  });
+
   it("prompt marks the session as thinking and records the project", async () => {
     const r = await hook("prompt", { session_id: "s1", cwd: "/work/my-proj" });
     expect(r.code).toBe(0);
