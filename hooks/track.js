@@ -2,7 +2,7 @@
 // Claude Code hook: records, per session, what the session is doing and which resources
 // it touches, for the AwesomeWM desktop "constellation".
 // Writes ~/.claude/constellation/<session_id>.json atomically. Never fails the hook.
-// Usage: node track.js <prompt|pre|post|notify|permreq|stop|end>
+// Usage: node track.js <start|prompt|pre|post|notify|permreq|stop|end>
 
 const fs = require("fs");
 const os = require("os");
@@ -117,6 +117,7 @@ function run(event, p) {
   };
 
   switch (event) {
+    case "start": break; // registers the session as idle so it shows before its first prompt
     case "prompt": s.state = "thinking"; break;
     case "pre": {
       const t = p.tool_name || "";

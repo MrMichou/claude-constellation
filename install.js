@@ -16,6 +16,7 @@ const linkDir = path.join(home, ".config", "awesome", "ui", "desktop");
 const link = path.join(linkDir, "claude_constellation");
 
 const EVENTS = {
+  SessionStart: "start",
   UserPromptSubmit: "prompt",
   PreToolUse: "pre",
   PostToolUse: "post",

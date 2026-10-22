@@ -12,7 +12,7 @@ Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a
 
 ## How it works
 
-- `hooks/track.js` is a Claude Code hook. It writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history) and deletes the file on `SessionEnd`.
+- `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history) and deletes the file on `SessionEnd`.
 - `awesome/claude_constellation/` is the Lua module: `render.lua` draws (cairo, no Awesome dependency), `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
 - **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
