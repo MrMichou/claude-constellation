@@ -28,14 +28,13 @@ local win = GdkX11.X11Window.foreign_new_for_display(display, xid)
 
 -- Each frame is drawn off-screen, then copied to the window in one paint (no flicker).
 local static = false
-local buf, buf_cr, bw, bh
+local buf, bw, bh
 local function frame()
   local w, h = win:get_width(), win:get_height()
   if not buf or w ~= bw or h ~= bh then
     buf, bw, bh = cairo.ImageSurface.create(cairo.Format.RGB24, w, h), w, h
-    buf_cr = cairo.Context(buf)
   end
-  R.draw(buf_cr, w, h, { private = true, static = static })
+  R.draw(cairo.Context(buf), w, h, { private = true, static = static })
   local out = Gdk.cairo_create(win)
   out:set_source_surface(buf, 0, 0)
   out:paint()
@@ -55,10 +54,9 @@ local function schedule(want)
 end
 
 local function poll()
-  local active, count = R.read_sessions()
+  local active = R.read_sessions()
   static = R.on_battery()
-  -- No session: an empty background, repainted once a second in case the window was exposed.
-  schedule(count == 0 and 1 or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
+  schedule((active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
   collectgarbage("step") -- per-frame cairo contexts are only freed by the GC
   return true
 end
