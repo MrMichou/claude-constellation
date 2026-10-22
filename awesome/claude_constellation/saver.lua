@@ -33,21 +33,26 @@ local R = dofile(DIR .. "render.lua")
 -- Palette written by the Awesome module (init.lua); defaults if Awesome never ran it.
 R.set_palette(R.read_json(R.CACHE_DIR .. "theme.json"))
 local layout = R.read_layout() -- the one chosen on the desktop
+local backend_choice = R.read_backend() -- likewise; "auto" is rechecked every second
+local backend = R.resolve_backend(backend_choice)
 
 Gtk.init()
 local display = Gdk.Display.get_default()
 local win = GdkX11.X11Window.foreign_new_for_display(display, xid)
 
--- Each frame is drawn off-screen, then copied to the window in one paint (no flicker).
+-- Each frame is drawn off-screen, then copied to the window in one paint (no flicker). On the
+-- GPU the buffer is a surface similar to the window (an X pixmap), else an in-memory image.
 local static = false
-local buf, buf_cr, bw, bh
+local buf, buf_cr, bw, bh, bb
 local function frame()
   local w, h = win:get_width(), win:get_height()
-  if not buf or w ~= bw or h ~= bh then
-    buf, bw, bh = cairo.ImageSurface.create(cairo.Format.RGB24, w, h), w, h
+  if not buf or w ~= bw or h ~= bh or backend ~= bb then
+    buf = backend == "gpu" and win:create_similar_surface(cairo.Content.COLOR, w, h)
+      or cairo.ImageSurface.create(cairo.Format.RGB24, w, h)
+    bw, bh, bb = w, h, backend
     buf_cr = cairo.Context(buf)
   end
-  R.draw(buf_cr, w, h, { private = true, static = static, layout = layout })
+  R.draw(buf_cr, w, h, { private = true, static = static, layout = layout, backend = backend })
   local out = Gdk.cairo_create(win)
   out:set_source_surface(buf, 0, 0)
   out:paint()
@@ -62,6 +67,10 @@ local function schedule(want)
   if timer_id then GLib.source_remove(timer_id) end
   timer_id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, math.floor(1000 / fps), function()
     local ok, err = pcall(frame)
+    if not ok and backend == "gpu" and backend_choice == "auto" then
+      backend, backend_choice = "cpu", "cpu" -- same fallback as the desktop layer
+      ok, err = pcall(frame)
+    end
     if not ok and err ~= last_err then
       last_err = err
       io.stderr:write("claude-constellation-saver: ", tostring(err), "\n")
@@ -73,6 +82,7 @@ end
 local function poll()
   local active, count = R.read_sessions()
   static = R.on_battery()
+  if backend_choice == "auto" then backend = R.resolve_backend("auto") end
   -- No session: an empty background, repainted once a second in case the window was exposed.
   schedule(count == 0 and 1 or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
   collectgarbage("step") -- per-frame cairo contexts are only freed by the GC

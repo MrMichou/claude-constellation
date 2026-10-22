@@ -35,11 +35,27 @@ end)
 local static = false
 local layout = R.read_layout() -- one of R.LAYOUTS; see set_layout()
 
+-- Render backend: the choice ("auto", "gpu", "cpu"; see set_backend) and the one in use.
+-- "auto" uses the GPU when there is one, rechecked every second; a GPU frame that fails
+-- switches "auto" to the CPU for the rest of the session.
+local backend_choice = R.read_backend()
+local gpu_failed = false
+local function resolve_backend()
+  if backend_choice == "auto" and gpu_failed then return "cpu" end
+  return R.resolve_backend(backend_choice)
+end
+local backend = resolve_backend()
+
 -- Animated surface: one desktop-type wibox on the primary screen, below every client.
 local canvas = wibox.widget.base.make_widget()
 function canvas:fit(_, width, height) return width, height end
 function canvas:draw(_, cr, width, height)
-  local ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout })
+  local ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+  if not ok and backend == "gpu" and backend_choice == "auto" then
+    gpu_failed, backend = true, "cpu"
+    gears.debug.print_warning("claude_constellation: GPU frame failed, using the CPU: " .. tostring(err))
+    ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+  end
   if not ok then gears.debug.print_warning("claude_constellation: " .. tostring(err)) end
 end
 
@@ -64,7 +80,7 @@ place(screen.primary)
 screen.connect_signal("property::geometry", function(s) if s == screen.primary then place(s) end end)
 screen.connect_signal("primary_changed", function(s) if s == screen.primary then place(s) end end)
 
--- Redraw at a high rate only while something is happening, to spare the GPU.
+-- Redraw at a high rate only while something is happening, to spare the GPU/CPU.
 -- While static (on battery) only the emotes move, so it stays at the idle rate.
 -- With no session, or the layer hidden, nothing moves: no redraws at all.
 local user_hidden = false
@@ -81,6 +97,7 @@ gears.timer {
   call_now = true,
   callback = function()
     local active, count = R.read_sessions()
+    backend = resolve_backend()
     local battery = R.on_battery()
     static = battery and ON_BATTERY == "static"
     local visible = not user_hidden and not (battery and ON_BATTERY == "off")
@@ -147,9 +164,30 @@ local function set_layout(name)
   return layout
 end
 
+-- Pick the render backend: "auto" (the GPU if there is one, else the CPU), "gpu" or "cpu".
+-- Kept for the next start and for the lock screen. Returns the choice and the backend in use.
+local function set_backend(name)
+  local known = false
+  for _, b in ipairs(R.BACKENDS) do if b == name then known = true end end
+  if known then
+    backend_choice, gpu_failed = name, false
+    backend = resolve_backend()
+    R.write_backend(name)
+    canvas:emit_signal("widget::redraw_needed")
+    local ok, naughty = pcall(require, "naughty")
+    if ok then
+      naughty.notify({ title = "Claude constellation",
+        text = "Rendering: " .. name .. " (" .. backend .. ")", timeout = 2 })
+    end
+  end
+  return backend_choice, backend
+end
+
 return {
   set_layout = set_layout,
   layouts = R.LAYOUTS,
+  set_backend = set_backend,
+  backend = function() return backend_choice, backend end,
   lock = lock,
   snapshot = snapshot,
   toggle = function()
