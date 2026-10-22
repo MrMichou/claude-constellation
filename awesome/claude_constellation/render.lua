@@ -474,6 +474,27 @@ function K.ago(t, t0)
   return math.floor(d / 3600) .. "h"
 end
 
+-- How much a session needs you: 1 permission, 2 waiting, 3 working, 4 done/idle, 5 asleep.
+function K.urgency(s)
+  if s.stale then return 5 end
+  if s.state == "permission" then return 1 end
+  if s.state == "waiting" then return 2 end
+  if is_active(s) then return 3 end
+  return 4
+end
+
+-- The sessions, most urgent first (stable: by name within a level).
+function K.by_urgency(list)
+  local out = {}
+  for i, s in ipairs(list) do out[i] = s end
+  table.sort(out, function(a, b)
+    local ua, ub = K.urgency(a), K.urgency(b)
+    if ua ~= ub then return ua < ub end
+    return a.id < b.id
+  end)
+  return out
+end
+
 -- A session's node: glow pulsing with its state, and its Clawd emote on top (a dot if the
 -- sprites are missing). `size` is the sprite size; the glow scales with it.
 function K.node(cr, s, i, x, y, f, size)
@@ -500,7 +521,7 @@ end
 -- Layouts ----------------------------------------------------------------------------------------
 -- Each layouts/<name>.lua returns function(K, cr, w, h, f), f being the frame:
 -- { t, ta (animation clock, frozen while static), static, private, list (sessions), links, gen }.
-R.LAYOUTS = { "constellation", "lanes", "cards", "resources" }
+R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud", "popup" }
 local layouts = {}
 for _, name in ipairs(R.LAYOUTS) do layouts[name] = dofile(DIR .. "layouts/" .. name .. ".lua") end
 

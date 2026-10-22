@@ -12,7 +12,7 @@ Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a
 
 ## Layouts
 
-The same sessions can be shown four ways; nodes glide to their new place when you switch.
+The same sessions can be shown several ways; nodes glide to their new place when you switch.
 
 ![The four layouts: constellation, swimlanes, cards, resources](docs/layouts.gif)
 
@@ -21,7 +21,17 @@ The same sessions can be shown four ways; nodes glide to their new place when yo
 - **cards**: a grid of cards (state, running tool, last targets) and a summary tile; stays readable with many sessions.
 - **resources**: files, commands and tmux sessions in the middle, sessions around them; a resource used by several sessions sits between them.
 
-Switch with `constellation-layout [next|prev|constellation|lanes|cards|resources]` (linked into `~/.local/bin` by `install.js`), or from a key binding:
+Five more put the sessions that need you first:
+
+![kanban, radar, strip, hud and popup](docs/layouts-more.png)
+
+- **kanban**: columns Needs you / Working / Done / Asleep; the left one is your to-do list.
+- **radar**: the last 30 minutes as a clock face, one ring per session, the most urgent session in the middle.
+- **strip**: a band across the top of the screen, one chip per session with a 10-minute activity sparkline.
+- **hud**: a compact column on the right edge, to stay visible beside your windows.
+- **popup**: the session list as a key binding would show it over your windows.
+
+Switch with `constellation-layout [next|prev|<layout>]` (linked into `~/.local/bin` by `install.js`), or from a key binding:
 
 ```lua
 awful.key({ modkey, "Shift" }, "c", function()

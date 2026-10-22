@@ -33,7 +33,7 @@ pcall(function()
 end)
 
 local static = false
-local layout = R.read_layout() -- constellation, lanes, cards or resources; see set_layout()
+local layout = R.read_layout() -- one of R.LAYOUTS; see set_layout()
 
 -- Animated surface: one desktop-type wibox on the primary screen, below every client.
 local canvas = wibox.widget.base.make_widget()
