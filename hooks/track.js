@@ -11,6 +11,8 @@ const path = require("path");
 const dir = path.join(os.homedir(), ".claude", "constellation");
 const event = process.argv[2] || "";
 const HISTORY_MAX = 10;
+const LINKS_MAX = 20; // shared-resource keys kept per session
+const LINK_TTL = 3600; // seconds a shared resource stays linkable
 
 function shortPath(f) {
   if (!f) return "";
@@ -53,6 +55,42 @@ function describeTool(t, input) {
   }
 }
 
+// tmux sessions a shell command drives: the `-t` target of each `tmux ...` invocation, with
+// `$P` resolved from `P=0:0` or from a `for P in 0:0.0 0:0.1` loop earlier in the command.
+// Only segments that start with `tmux` count, so text merely mentioning tmux is ignored.
+function tmuxSessions(cmd) {
+  const vars = {};
+  for (const m of cmd.matchAll(/(?:^|[\s;&(])([A-Za-z_]\w*)=(['"]?)([^\s;'"&|)]+)\2/g)) vars[m[1]] = [m[3]];
+  for (const m of cmd.matchAll(/\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]+)/g)) vars[m[1]] = m[2].trim().split(/\s+/);
+  const out = new Set();
+  const add = (target) => {
+    const ref = target.match(/^\$\{?(\w+)\}?$/);
+    for (const v of ref ? vars[ref[1]] || [] : [target]) {
+      const sess = v.replace(/^['"=]+|['"]+$/g, "").split(":")[0];
+      if (/^[\w.-]+$/.test(sess)) out.add(sess);
+    }
+  };
+  for (const seg of cmd.split(/;|&&|\|\||\||\n|\bdo\b/)) {
+    if (!/^\s*(?:[A-Za-z_]\w*=\S*\s+)*tmux\s/.test(seg)) continue;
+    for (const m of seg.matchAll(/\s-t\s*(['"]?)([^\s'"]+)\1/g)) add(m[2]);
+  }
+  return [...out];
+}
+
+// Resources another session may share, as { key, kind, label }: the same file, or the same
+// tmux session driven via send-keys/capture-pane. The renderer links sessions sharing a key.
+function linkKeys(t, input) {
+  const i = input || {};
+  const f = i.file_path || i.notebook_path;
+  if (f && ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(t)) {
+    return [{ key: "file:" + f, kind: "file", label: path.basename(f) }];
+  }
+  if (t === "Bash" && /\btmux\b/.test(i.command || "")) {
+    return tmuxSessions(i.command).map((s) => ({ key: "tmux:" + s, kind: "shell", label: "tmux " + s }));
+  }
+  return [];
+}
+
 let raw = "";
 process.stdin.on("data", (d) => (raw += d));
 process.stdin.on("end", () => {
@@ -81,6 +119,7 @@ function run(p) {
     kind: prev.kind || "",
     target: prev.target || "",
     history: prev.history || [],
+    links: prev.links || {},
     ts: now,
   };
 
@@ -92,6 +131,11 @@ function run(p) {
       Object.assign(s, { state: "tool", tool: t, kind: d.kind, target: d.target });
       s.history.push({ tool: t, kind: d.kind, target: d.target, ts: now });
       s.history = s.history.slice(-HISTORY_MAX);
+      for (const l of linkKeys(t, p.tool_input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
+      s.links = Object.fromEntries(Object.entries(s.links)
+        .filter(([, l]) => now - l.ts < LINK_TTL)
+        .sort(([, a], [, b]) => b.ts - a.ts)
+        .slice(0, LINKS_MAX));
       break;
     }
     case "post": s.state = "thinking"; break;

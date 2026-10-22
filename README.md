@@ -5,6 +5,7 @@ Fond d'écran animé pour AwesomeWM : chaque session Claude Code active apparaî
 - **Nœud** : pulse selon l'état de la session. Bleu accent pour `thinking`, couleur du type d'outil pour `tool`, jaune clignotant pour une permission en attente, gris pour `done`/`idle`. La session est atténuée après 10 min d'inactivité et masquée après 3 h.
 - **Emote Clawd** : comme dans [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), chaque nœud affiche un crabe animé selon l'état : *thinking*, *typing* pendant un outil, *listening* en attente de permission, *birthday* pendant 30 s après la fin d'un tour, *sleeping* quand la session est inactive. Artwork : [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
 - **Satellites** : les 10 dernières cibles de la session. Leur lien s'estompe sur 5 min, et une impulsion parcourt le lien à chaque appel d'outil.
+- **Liens entre sessions** : deux sessions qui utilisent la même ressource dans la dernière demi-heure sont reliées par une courbe étiquetée (« ⇄ tmux 0 », « ⇄ deploy.yml »), parcourue par une lueur. Ressources reconnues : un même fichier (Read/Edit/Write), ou une même session tmux pilotée par `tmux … -t <cible>` (y compris `-t $P` avec `P=0:0` ou une boucle `for p in 0:0.0 0:0.1`). Sur l'écran de verrouillage, seuls « tmux » / « fichier » sont affichés.
 - **Couleurs par type** : file = bleu, shell = vert, search = cyan, web = magenta, agent = jaune, mcp = rouge.
 
 ## Fonctionnement

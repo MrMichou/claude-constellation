@@ -18,6 +18,7 @@ local HIDE_AFTER = 3 * 3600 -- seconds without activity -> hidden (crashed sessi
 local FADE_LINK = 5 * 60 -- a satellite link fades out over this many seconds
 local PARTICLE_TIME = 1.4 -- seconds for a pulse to travel session -> target
 local DONE_PARTY = 30 -- seconds the "birthday" emote plays after a turn ends
+local LINK_WINDOW = 30 * 60 -- two sessions using one resource within this window get linked
 
 -- Clawd emotes (same sprite strips as claude-status-bar): one loop per session state.
 -- Artwork from github.com/xixicc186/clawd-emotes-skill.
@@ -240,6 +241,79 @@ local function text(cr, str, x, y, size, c, a, center)
   cr:show_text(str)
 end
 
+-- Sessions sharing a resource (same tmux session, same file) used within LINK_WINDOW:
+-- { {a = s1, b = s2, kind, labels = {...}, ts = latest shared use}, ... }
+local function shared_links(t)
+  local by_key = {}
+  for _, sid in ipairs(order) do
+    local s = sessions[sid]
+    for key, l in pairs(type(s.links) == "table" and s.links or {}) do
+      if type(l) == "table" and t - (tonumber(l.ts) or 0) < LINK_WINDOW then
+        by_key[key] = by_key[key] or {}
+        table.insert(by_key[key], { s = s, l = l })
+      end
+    end
+  end
+  local by_pair, list, keys = {}, {}, {}
+  for key in pairs(by_key) do keys[#keys + 1] = key end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local users = by_key[key]
+    for x = 1, #users - 1 do
+      for y = x + 1, #users do
+        local a, b = users[x], users[y]
+        local id = a.s.sid .. "|" .. b.s.sid
+        local link = by_pair[id]
+        if not link then
+          link = { a = a.s, b = b.s, kind = a.l.kind, labels = {}, ts = 0 }
+          by_pair[id] = link
+          list[#list + 1] = link
+        end
+        if #link.labels < 2 then link.labels[#link.labels + 1] = a.l.label or key end
+        link.ts = math.max(link.ts, math.min(tonumber(a.l.ts) or 0, tonumber(b.l.ts) or 0))
+      end
+    end
+  end
+  return list
+end
+
+-- A bowed line between two linked sessions, a glow travelling along it, and the shared
+-- resource names at its middle (just the kind when private).
+local function draw_links(cr, t, ta, static, private)
+  for k, link in ipairs(shared_links(t)) do
+    local a, b = link.a, link.b
+    local A = math.min(a.alpha, b.alpha) * math.max(0.3, 1 - (t - link.ts) / LINK_WINDOW)
+    local kc = C.kind[link.kind] or C.kind.other
+    local mx, my = (a.x + b.x) / 2, (a.y + b.y) / 2
+    local dx, dy = b.x - a.x, b.y - a.y
+    local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+    local bow = 0.12 * len
+    local qx, qy = mx - dy / len * bow, my + dx / len * bow -- control point, off to one side
+    local function at(u) -- point on the quadratic curve
+      local v = 1 - u
+      return v * v * a.x + 2 * v * u * qx + u * u * b.x, v * v * a.y + 2 * v * u * qy + u * u * b.y
+    end
+
+    cr:set_line_width(1.5)
+    set(cr, kc, 0.45 * A)
+    cr:move_to(a.x, a.y)
+    cr:curve_to(a.x + (qx - a.x) * 2 / 3, a.y + (qy - a.y) * 2 / 3,
+      b.x + (qx - b.x) * 2 / 3, b.y + (qy - b.y) * 2 / 3, b.x, b.y)
+    cr:stroke()
+
+    if not static then
+      local u = (ta * 0.18 + k * 0.37) % 2
+      local px, py = at(u <= 1 and u or 2 - u) -- back and forth: a shared channel
+      glow(cr, px, py, 10, kc, 0.8 * A)
+    end
+
+    local lx, ly = at(0.5)
+    local label = private and (link.kind == "file" and "fichier" or "tmux")
+      or table.concat(link.labels, " · ")
+    text(cr, "⇄ " .. label, lx, ly - 6, 11, kc, 0.85 * A, true)
+  end
+end
+
 -- Draw one frame. opts.static freezes everything but the Clawd emotes (battery mode);
 -- opts.private drops what could leak on a lock screen: satellite labels and the tool target.
 function R.draw(cr, w, h, opts)
@@ -266,8 +340,16 @@ function R.draw(cr, w, h, opts)
     s.x = s.x and s.x + (tx - s.x) * ease or tx
     s.y = s.y and s.y + (ty - s.y) * ease or ty
 
-    local stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)
-    s.alpha = s.alpha + (((stale and 0.35) or 1) - s.alpha) * (static and 1 or 0.08)
+    s.stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)
+    s.alpha = s.alpha + (((s.stale and 0.35) or 1) - s.alpha) * (static and 1 or 0.08)
+  end
+
+  draw_links(cr, t, ta, static, private)
+
+  for i, sid in ipairs(order) do
+    local s = sessions[sid]
+    local seed = i * 1.7
+    local stale = s.stale
     local A = s.alpha
     local col = node_color(s)
 
