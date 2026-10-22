@@ -14,7 +14,7 @@ Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a
 
 The same sessions can be shown several ways; nodes glide to their new place when you switch.
 
-![The four layouts: constellation, swimlanes, cards, resources](docs/layouts.gif)
+![Switching between layouts: constellation, swimlanes, cards, resources](docs/layouts.gif)
 
 - **constellation** (default): the view described above.
 - **lanes**: one lane per session with its tool calls over the last 20 minutes, coloured by kind: parallel work, idle gaps and how long a session has been waiting for you.
@@ -29,17 +29,34 @@ Five more put the sessions that need you first:
 - **radar**: the last 30 minutes as a clock face, one ring per session, the most urgent session in the middle.
 - **strip**: a band across the top of the screen, one chip per session with a 10-minute activity sparkline.
 - **hud**: a compact column on the right edge, to stay visible beside your windows.
-- **popup**: the session list as a key binding would show it over your windows.
+- **popup**: the session list as a key binding would show it over your windows (display only for now).
 
-Switch with `constellation-layout [next|prev|<layout>]` (linked into `~/.local/bin` by `install.js`), or from a key binding:
+Kanban, strip, hud and popup sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
+
+### Switching layouts
+
+From a terminal, or any script:
+
+```sh
+constellation-layout            # next layout (same as `next`)
+constellation-layout prev
+constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
+```
+
+`install.js` links the command into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+
+From a key binding, e.g. in your global keys:
 
 ```lua
 awful.key({ modkey, "Shift" }, "c", function()
-  require("ui.desktop.claude_constellation").set_layout("next")
-end)
+  local ok, cc = pcall(require, "ui.desktop.claude_constellation")
+  if ok and cc.set_layout then cc.set_layout("next") end
+end, { description = "Next Claude constellation layout", group = "awesome" })
 ```
 
-The choice is kept in `~/.cache/claude-constellation/layout` and also applies to the lock screen, where every layout hides paths and commands.
+The `pcall` keeps the key harmless if the module isn't installed. Check the key is free first: in Awesome's default `rc.lua`, **Mod+Shift+C closes the focused window**.
+
+The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts, and also applies to the lock screen, where every layout hides paths and commands.
 
 ## How it works
 
@@ -51,12 +68,16 @@ The choice is kept in `~/.cache/claude-constellation/layout` and also applies to
 ## Installation
 
 ```sh
-node install.js            # hooks in ~/.claude/settings.json + module symlink
+node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-layout command
 # then in ~/.config/awesome/rc.lua, after beautiful.init(...) but BEFORE require("ui")
 # (otherwise the desktop layer covers the bar):
 #   pcall(require, "ui.desktop.claude_constellation")
 echo 'awesome.restart()' | awesome-client
 ```
+
+`install.js` keeps a backup of `settings.json` (`settings.json.bak-constellation`, overwritten on every run) and never replaces a `~/.local/bin/constellation-layout` it did not create.
+
+Only one checkout should be installed at a time. Before installing from another clone or worktree, run `node install.js --uninstall` in the one currently installed; otherwise both checkouts' hooks run side by side and write the same session files.
 
 ### Animated lock screen (xsecurelock)
 
@@ -73,11 +94,11 @@ end)
 
 The Awesome theme colours are written to `~/.cache/claude-constellation/theme.json` so the saver, which runs outside Awesome, uses the same palette.
 
-To uninstall: `node install.js --uninstall`, then remove the line added to `rc.lua`.
+To uninstall: `node install.js --uninstall` (hooks, module link and the `constellation-layout` link), then remove the line added to `rc.lua` and any key binding you added.
 
 ## Demos
 
-The GIFs in `docs/` (including the layouts one) are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`.
+The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`; its `layouts` mode cycles through every layout (`docs/layouts.gif`, and the frames `docs/layouts-more.png` was assembled from).
 
 ## Tests
 
@@ -86,8 +107,9 @@ npm ci && make test   # = npm test + luacheck + Lua specs
 make test-docker      # luacheck + Lua specs in the CI's Arch container (no local busted/luacheck needed)
 ```
 
-- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` and `install.js` against a throwaway `$HOME`.
-- `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading, battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links and the battery freeze, asserted through a recording cairo context, plus a real cairo frame and sprite-asset checks; `saver.lua` refuses to run without a window.
+- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` (states, history, the tool-call timeline, resumed sessions) and `install.js` (hooks, links, the `constellation-layout` command) against a throwaway `$HOME`.
+- `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading (hook files and Claude Code's registry), battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links, the battery freeze, every layout (each state, static and private, ordering by urgency) and the remembered layout, asserted through a recording cairo context, plus real cairo frames for every layout and sprite-asset checks; `saver.lua` refuses to run without a window, and its sh prologue picks the first Lua with lgi (fake interpreters on `PATH`).
+- The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
 - CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.
 
