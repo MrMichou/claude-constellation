@@ -107,6 +107,7 @@ The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from 
 
 ```sh
 npm ci && make test   # = npm test + luacheck + Lua specs
+make test-e2e         # installer -> hook -> renderer, in a throwaway $HOME
 make test-docker      # luacheck + Lua specs in the CI's Arch container (no local busted/luacheck needed)
 ```
 
@@ -114,7 +115,8 @@ make test-docker      # luacheck + Lua specs in the CI's Arch container (no loca
 - `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading (hook files and Claude Code's registry), battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links, the battery freeze, every layout (each state, static and private, ordering by urgency) and the remembered layout, asserted through a recording cairo context, plus real cairo frames for every layout and sprite-asset checks; `saver.lua` refuses to run without a window, and its sh prologue picks the first Lua with lgi (fake interpreters on `PATH`).
 - The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
-- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.
+- `e2e/` (`make test-e2e`, or `make test-e2e-docker` for Lua 5.4, 5.1 and LuaJIT): installs into a throwaway `$HOME`, feeds the hook commands written into `settings.json` Claude Code-shaped events (two sessions sharing a file, one fanning out to 17 subagents of 8 types, ten of them started in parallel), checks the session files, then loads the installed module and draws every layout, public and private, from those files with each Lua the saver may use. It ends with a few frames of both demo scenarios.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, the Lua specs, and the e2e test under Lua 5.4, 5.1 and LuaJIT in an Arch container.
 
 ## Releasing
 
