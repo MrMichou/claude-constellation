@@ -128,66 +128,6 @@ local function is_active(s)
   return s.state == "thinking" or s.state == "tool" or s.state == "permission"
 end
 
--- Reload the session files; returns true if any session is working.
-function R.read_sessions()
-  local seen = {}
-  pcall(function()
-    local en = Gio.File.new_for_path(DATA_DIR)
-      :enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
-    if not en then return end
-    while true do
-      local info = en:next_file(); if not info then break end
-      local sid = info:get_name():match("^(.+)%.json$")
-      if sid then
-        local t = R.read_json(DATA_DIR .. sid .. ".json")
-        if type(t) == "table" and now() - (tonumber(t.ts) or 0) < HIDE_AFTER then
-          local s = sessions[sid] or { alpha = 0 }
-          for k, v in pairs(t) do s[k] = v end
-          sessions[sid] = s
-          seen[sid] = true
-        end
-      end
-    end
-  end)
-  for sid in pairs(sessions) do
-    if not seen[sid] then sessions[sid] = nil end
-  end
-  order = {}
-  local active = false
-  for sid, s in pairs(sessions) do
-    order[#order + 1] = sid
-    if is_active(s) then active = true end
-  end
-  table.sort(order)
-  return active
-end
-
--- On battery = the system battery is discharging (peripheral batteries have scope "Device").
--- Machines without a battery are always on mains.
-local function read_line(path)
-  local f = io.open(path, "r")
-  if not f then return nil end
-  local v = f:read("*l"); f:close()
-  return v
-end
-function R.on_battery()
-  local discharging = false
-  pcall(function()
-    local en = Gio.File.new_for_path(PS_DIR)
-      :enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
-    if not en then return end
-    while true do
-      local info = en:next_file(); if not info then break end
-      local dev = PS_DIR .. info:get_name() .. "/"
-      if read_line(dev .. "type") == "Battery" and read_line(dev .. "scope") ~= "Device"
-        and read_line(dev .. "status") == "Discharging" then
-        discharging = true
-      end
-    end
-  end)
-  return discharging
-end
-
 -- Unique targets of a session, newest last: { {kind, target, ts}, ... }
 local function satellites(s)
   local by, list = {}, {}
@@ -199,52 +139,6 @@ local function satellites(s)
     end
   end
   return list
-end
-
-local function node_color(s)
-  if s.state == "thinking" then return C.thinking end
-  if s.state == "tool" then return C.kind[s.kind] or C.kind.other end
-  if s.state == "permission" or s.state == "waiting" then return C.permission end
-  return C.dim
-end
-
--- Emote for a session's state, plus whether it loops (the resting crab is a still pose).
-local function emote(s, t, stale)
-  if is_active(s) or s.state == "waiting" then return CLAWD[s.state], true end
-  if stale then return CLAWD.sleeping, true end
-  if s.state == "done" and t - (tonumber(s.ts) or 0) < DONE_PARTY then return CLAWD.done, true end
-  return CLAWD.rest, false
-end
-
-local function draw_sprite(cr, cells, idx, x, y, a)
-  local cell = cells[(idx % #cells) + 1]
-  local w, h = cell:get_width(), cell:get_height()
-  local k = SPRITE_SIZE / math.max(w, h)
-  cr:save()
-  cr:translate(x - w * k / 2, y - h * k / 2)
-  cr:scale(k, k)
-  cr:set_source_surface(cell, 0, 0)
-  cr:get_source():set_filter(cairo.Filter.NEAREST) -- keep the pixel art crisp
-  cr:paint_with_alpha(a)
-  cr:restore()
-end
-
-local function glow(cr, x, y, r, c, a)
-  local pat = cairo.Pattern.create_radial(x, y, 0, x, y, r)
-  pat:add_color_stop_rgba(0, c[1], c[2], c[3], a)
-  pat:add_color_stop_rgba(0.35, c[1], c[2], c[3], a * 0.35)
-  pat:add_color_stop_rgba(1, c[1], c[2], c[3], 0)
-  cr:set_source(pat)
-  cr:arc(x, y, r, 0, 2 * math.pi)
-  cr:fill()
-end
-
-local function text(cr, str, x, y, size, c, a, center)
-  cr:set_font_size(size)
-  local ext = cr:text_extents(str)
-  cr:move_to(center and x - ext.width / 2 or x, y)
-  set(cr, c, a)
-  cr:show_text(str)
 end
 
 -- Sessions sharing a resource (same tmux session, same file) used within LINK_WINDOW:
@@ -283,10 +177,169 @@ local function shared_links(t)
   return list
 end
 
+-- Decoded session files with the size/mtime they were read at: a file is only parsed again
+-- when the hook rewrote it.
+local files = {}
+local links = {} -- shared_links(), refreshed with the sessions
+
+-- Reload the session files; returns whether any session is working, and the session count.
+function R.read_sessions()
+  local seen, seen_files = {}, {}
+  local t = now()
+  pcall(function()
+    local en = Gio.File.new_for_path(DATA_DIR):enumerate_children(
+      "standard::name,standard::size,time::modified,time::modified-usec", Gio.FileQueryInfoFlags.NONE)
+    if not en then return end
+    while true do
+      local info = en:next_file(); if not info then break end
+      local sid = info:get_name():match("^(.+)%.json$")
+      if sid then
+        local stamp = ("%d:%d:%d"):format(info:get_size(), info:get_attribute_uint64("time::modified"),
+          info:get_attribute_uint32("time::modified-usec"))
+        local f = files[sid]
+        local fresh = not f or f.stamp ~= stamp
+        if fresh then
+          f = { stamp = stamp, data = R.read_json(DATA_DIR .. sid .. ".json") }
+          files[sid] = f
+        end
+        seen_files[sid] = true
+        local d = f.data
+        if type(d) == "table" and t - (tonumber(d.ts) or 0) < HIDE_AFTER then
+          local s = sessions[sid]
+          if not s or fresh then
+            s = s or { alpha = 0 }
+            for k, v in pairs(d) do s[k] = v end
+            s.sats = satellites(s)
+            sessions[sid] = s
+          end
+          seen[sid] = true
+        end
+      end
+    end
+  end)
+  for sid in pairs(files) do
+    if not seen_files[sid] then files[sid] = nil end
+  end
+  for sid in pairs(sessions) do
+    if not seen[sid] then sessions[sid] = nil end
+  end
+  order = {}
+  local active = false
+  for sid, s in pairs(sessions) do
+    order[#order + 1] = sid
+    if is_active(s) then active = true end
+  end
+  table.sort(order)
+  links = shared_links(t)
+  return active, #order
+end
+
+-- On battery = the system battery is discharging (peripheral batteries have scope "Device").
+-- Machines without a battery are always on mains.
+local function read_line(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local v = f:read("*l"); f:close()
+  return v
+end
+function R.on_battery()
+  local discharging = false
+  pcall(function()
+    local en = Gio.File.new_for_path(PS_DIR)
+      :enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
+    if not en then return end
+    while true do
+      local info = en:next_file(); if not info then break end
+      local dev = PS_DIR .. info:get_name() .. "/"
+      if read_line(dev .. "type") == "Battery" and read_line(dev .. "scope") ~= "Device"
+        and read_line(dev .. "status") == "Discharging" then
+        discharging = true
+      end
+    end
+  end)
+  return discharging
+end
+
+local function node_color(s)
+  if s.state == "thinking" then return C.thinking end
+  if s.state == "tool" then return C.kind[s.kind] or C.kind.other end
+  if s.state == "permission" or s.state == "waiting" then return C.permission end
+  return C.dim
+end
+
+-- Emote for a session's state, plus whether it loops (the resting crab is a still pose).
+local function emote(s, t, stale)
+  if is_active(s) or s.state == "waiting" then return CLAWD[s.state], true end
+  if stale then return CLAWD.sleeping, true end
+  if s.state == "done" and t - (tonumber(s.ts) or 0) < DONE_PARTY then return CLAWD.done, true end
+  return CLAWD.rest, false
+end
+
+local function draw_sprite(cr, cells, idx, x, y, a)
+  local cell = cells[(idx % #cells) + 1]
+  local w, h = cell:get_width(), cell:get_height()
+  local k = SPRITE_SIZE / math.max(w, h)
+  cr:save()
+  cr:translate(x - w * k / 2, y - h * k / 2)
+  cr:scale(k, k)
+  cr:set_source_surface(cell, 0, 0)
+  cr:get_source():set_filter(cairo.Filter.NEAREST) -- keep the pixel art crisp
+  cr:paint_with_alpha(a)
+  cr:restore()
+end
+
+-- Rasterising a radial gradient was the costliest part of a frame, so each glow is drawn once
+-- per (colour, whole-pixel radius) into a small surface, then blitted with the wanted alpha.
+-- Keyed by the palette's colour tables: set_palette drops the old ones, and their surfaces.
+local glow_cache = setmetatable({}, { __mode = "k" })
+local function glow(cr, x, y, r, c, a)
+  r = math.floor(r + 0.5)
+  local by_r = glow_cache[c]
+  if not by_r then by_r = {}; glow_cache[c] = by_r end
+  local surf = by_r[r]
+  if not surf then
+    surf = cairo.ImageSurface.create(cairo.Format.ARGB32, 2 * r, 2 * r)
+    local g = cairo.Context(surf)
+    local pat = cairo.Pattern.create_radial(r, r, 0, r, r, r)
+    pat:add_color_stop_rgba(0, c[1], c[2], c[3], 1)
+    pat:add_color_stop_rgba(0.35, c[1], c[2], c[3], 0.35)
+    pat:add_color_stop_rgba(1, c[1], c[2], c[3], 0)
+    g:set_source(pat)
+    g:paint()
+    by_r[r] = surf
+  end
+  cr:set_source_surface(surf, x - r, y - r)
+  cr:paint_with_alpha(a)
+end
+
+-- Label widths, memoised per font size: text_extents is a costly lgi round-trip and labels
+-- rarely change. Flushed when it grows, since targets come and go.
+local widths, n_widths = {}, 0
+local function text_width(cr, str, size)
+  local by_str = widths[size]
+  local w = by_str and by_str[str]
+  if w then return w end
+  if n_widths > 500 then widths, n_widths = {}, 0 end
+  cr:set_font_size(size)
+  w = cr:text_extents(str).width
+  widths[size] = widths[size] or {}
+  widths[size][str] = w
+  n_widths = n_widths + 1
+  return w
+end
+
+local function text(cr, str, x, y, size, c, a, center)
+  local x0 = center and x - text_width(cr, str, size) / 2 or x
+  cr:set_font_size(size)
+  cr:move_to(x0, y)
+  set(cr, c, a)
+  cr:show_text(str)
+end
+
 -- A bowed line between two linked sessions, a glow travelling along it, and the shared
 -- resource names at its middle (just the kind when private).
 local function draw_links(cr, t, ta, static, private)
-  for k, link in ipairs(shared_links(t)) do
+  for k, link in ipairs(links) do
     local a, b = link.a, link.b
     local A = math.min(a.alpha, b.alpha) * math.max(0.3, 1 - (t - link.ts) / LINK_WINDOW)
     local kc = C.kind[link.kind] or C.kind.other
@@ -360,7 +413,7 @@ function R.draw(cr, w, h, opts)
     local col = node_color(s)
 
     -- Satellites: resources this session touched, orbiting slowly.
-    local sats = satellites(s)
+    local sats = s.sats
     for j, sat in ipairs(sats) do
       local age = t - (tonumber(sat.ts) or 0)
       local fade = math.max(0.12, 1 - age / FADE_LINK)
@@ -379,8 +432,7 @@ function R.draw(cr, w, h, opts)
         local label = sat.target or ""
         local lx = sx + 8
         if math.cos(sa) < 0 then -- left half: right-align the label against the dot
-          cr:set_font_size(11)
-          lx = sx - 8 - cr:text_extents(label).width
+          lx = sx - 8 - text_width(cr, label, 11)
         end
         text(cr, label, lx, sy + 4, 11, C.dim, 0.75 * fade * A)
       end

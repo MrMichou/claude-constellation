@@ -66,11 +66,13 @@ screen.connect_signal("primary_changed", function(s) if s == screen.primary then
 
 -- Redraw at a high rate only while something is happening, to spare the GPU.
 -- While static (on battery) only the emotes move, so it stays at the idle rate.
+-- With no session, or the layer hidden, nothing moves: no redraws at all.
 local user_hidden = false
+local function redraw() canvas:emit_signal("widget::redraw_needed") end
 local anim = gears.timer {
   timeout = 1 / R.FPS_IDLE,
   autostart = true,
-  callback = function() canvas:emit_signal("widget::redraw_needed") end,
+  callback = redraw,
 }
 
 gears.timer {
@@ -78,13 +80,18 @@ gears.timer {
   autostart = true,
   call_now = true,
   callback = function()
-    local active = R.read_sessions()
+    local active, count = R.read_sessions()
     local battery = R.on_battery()
     static = battery and ON_BATTERY == "static"
-    if box then box.visible = not user_hidden and not (battery and ON_BATTERY == "off") end
+    local visible = not user_hidden and not (battery and ON_BATTERY == "off")
+    if box then box.visible = visible end
 
+    if not visible or count == 0 then
+      if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
+      return
+    end
     local want = 1 / ((active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
-    if anim.timeout ~= want then anim.timeout = want; anim:again() end
+    if anim.timeout ~= want or not anim.started then anim.timeout = want; anim:again() end
   end,
 }
 
