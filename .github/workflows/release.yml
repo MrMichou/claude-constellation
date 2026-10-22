@@ -1,0 +1,44 @@
+name: Release
+
+# Pushed by `make release` (scripts/release.js): re-runs CI on the tagged commit, then publishes
+# the GitHub release with the CHANGELOG.md section as notes and a slim tarball (see .gitattributes).
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the tag matches package.json
+        run: |
+          pkg="v$(node -p 'require("./package.json").version')"
+          [ "$pkg" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json $pkg"; exit 1; }
+      - name: Release notes
+        run: |
+          node scripts/release.js notes "${GITHUB_REF_NAME#v}" > notes.md
+          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            printf '\n**Full changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME" >> notes.md
+          fi
+      - name: Tarball
+        run: |
+          name="claude-constellation-${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="$name/" -o "$name.tar.gz" "$GITHUB_REF_NAME"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag claude-constellation-*.tar.gz
