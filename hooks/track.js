@@ -172,8 +172,10 @@ function withLock(file, fn) {
     try {
       fd = fs.openSync(lock, "wx");
     } catch (e) {
-      if (e.code === "ENOENT" && !fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); continue; }
-      if (e.code !== "EEXIST" || Date.now() > deadline) break;
+      if (Date.now() > deadline) break;
+      // No data dir yet: create it (another hook may be doing the same) and retry the lock.
+      if (e.code === "ENOENT") { try { fs.mkdirSync(dir, { recursive: true }); } catch {} continue; }
+      if (e.code !== "EEXIST") break;
       try {
         if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE) { fs.rmSync(lock, { force: true }); continue; }
       } catch {}
