@@ -612,33 +612,67 @@ function R.write_backend(name)
 end
 
 -- Promview alerts shown by the HUD (see promview.lua): nil while Promview is off, else
--- { ok, error, fetched, alerts, counts = {critical, warning, info}, total }. Set by init.lua
--- after each poll; the lock-screen saver only gets the counts, through ALERTS_FILE.
+-- { ok, error, auth, fetched, alerts, groups, counts = {critical, warning, info}, total }.
+-- Set by init.lua after each poll, which also writes it to the cache for the lock-screen saver
+-- (R.write_alerts / R.read_alerts): the board looks the same there.
 local alerts
 function R.set_alerts(state) alerts = state end
 function R.alerts() return alerts end
 
--- Counts only (no names or hosts on the lock screen), flat for json.encode.
-function R.write_alert_counts(state)
-  local c = state and state.counts or {}
-  return R.write_json(R.CACHE_DIR .. "promview.json", {
-    ok = state ~= nil and state.ok == true, fetched = state and state.fetched or 0,
-    critical = c.critical or 0, warning = c.warning or 0, info = c.info or 0,
-  })
+-- Nested JSON for the cache (json.lua's encoder only does flat objects). Tables with a [1] or
+-- listed in `arrays` are arrays.
+local function encode(v, arrays)
+  local t = type(v)
+  if t == "string" then
+    return '"' .. v:gsub('[%c"\\]', function(c) return ("\\u%04x"):format(c:byte()) end) .. '"'
+  end
+  if t == "number" then return v == v and v ~= math.huge and v ~= -math.huge and tostring(v) or "0" end
+  if t == "boolean" then return tostring(v) end
+  if t ~= "table" then return "null" end
+  local parts = {}
+  if v[1] ~= nil or arrays then
+    for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+    return "[" .. table.concat(parts, ",") .. "]"
+  end
+  for k, x in pairs(v) do
+    if type(k) == "string" then
+      parts[#parts + 1] = encode(k) .. ":" .. encode(x, k == "where" or k == "groups")
+    end
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
 end
-function R.read_alert_counts()
-  local d = R.read_json(R.CACHE_DIR .. "promview.json")
+
+local ALERTS_FILE = "promview.json"
+function R.write_alerts(state)
+  if not state then os.remove(R.CACHE_DIR .. ALERTS_FILE); return true end
+  local f = io.open(R.CACHE_DIR .. ALERTS_FILE, "w")
+  if not f then return false end
+  f:write(encode({ ok = state.ok == true, error = state.error, auth = state.auth,
+    fetched = state.fetched or 0, total = state.total or 0, counts = state.counts or {},
+    groups = state.groups or {} }))
+  f:close()
+  return true
+end
+function R.read_alerts()
+  local d = R.read_json(R.CACHE_DIR .. ALERTS_FILE)
   if type(d) ~= "table" or d.ok == nil then return nil end
-  return { ok = d.ok == true, fetched = tonumber(d.fetched) or 0, alerts = {},
-    counts = { critical = tonumber(d.critical) or 0, warning = tonumber(d.warning) or 0,
-      info = tonumber(d.info) or 0 } }
+  d.ok, d.auth = d.ok == true, d.auth == true
+  d.fetched, d.total = tonumber(d.fetched) or 0, tonumber(d.total) or 0
+  d.counts = type(d.counts) == "table" and d.counts or {}
+  d.groups = type(d.groups) == "table" and d.groups or {}
+  for _, g in ipairs(d.groups) do
+    if type(g.where) ~= "table" then g.where = {} end
+    g.count, g.newest = tonumber(g.count) or 0, tonumber(g.newest)
+  end
+  d.alerts = {}
+  return d
 end
 
 -- Draw one frame. opts.layout picks the presentation (constellation by default);
 -- opts.static freezes everything but the Clawd emotes (battery mode); opts.private drops what
--- could leak on a lock screen: paths, commands and the tool target. opts.backend is "gpu" or
--- "cpu" (the default; see R.resolve_backend): on the CPU, a target that isn't an image (an X
--- surface) gets the frame from an in-memory buffer, in one paint. opts.area is the screen's
+-- could leak on a lock screen: paths, commands and the tool target (Promview alerts stay).
+-- opts.backend is "gpu" or "cpu" (the default; see R.resolve_backend): on the CPU, a target that
+-- isn't an image (an X surface) gets the frame from an in-memory buffer, in one paint. opts.area is the screen's
 -- workarea (see Layouts).
 local cpu_buf, cpu_cr
 function R.draw(cr, w, h, opts)

@@ -143,7 +143,7 @@ local function promview_poll()
         counts = prev.counts or {}, total = prev.total or 0, error = err, auth = auth }
     end
     R.set_alerts(state)
-    pcall(R.write_alert_counts, state)
+    pcall(R.write_alerts, state)
     redraw()
   end)
 end
@@ -236,7 +236,7 @@ return {
   -- Poll Promview now (constellation-promview-login calls it after signing in).
   promview_refresh = function()
     promview = Promview.read_config()
-    if not promview then R.set_alerts(nil); redraw(); return end
+    if not promview then R.set_alerts(nil); pcall(R.write_alerts, nil); redraw(); return end
     if not R.alerts() then R.set_alerts(CONNECTING) end
     promview_timer.timeout = promview.interval
     promview_timer:again()

@@ -87,7 +87,7 @@ constellation-promview-login        # or: constellation-promview-login https://p
 
 It opens your browser on the Promview sign-in, as the Promview desktop client does (`desktop_redirect` to a loopback port), trades the returned code for a Promview session token and stores it in your keyring with `secret-tool` (`service claude-constellation-promview server <url>`), then asks Awesome to poll again. Each poll looks the token up and hands it to `curl` on stdin, so it never appears in a file or on a command line. A Promview session lasts 12 hours: once it expires, the HUD says "sign in needed" and you run the command again. It needs `secret-tool` (libsecret) and an unlocked keyring.
 
-On the lock screen, the hud shows only the count per severity: no alert names or hosts.
+The lock screen shows the same board, alert names and hosts included, so you can see what's firing without unlocking: Awesome keeps polling while the screen is locked and hands each result to the saver through `~/.cache/claude-constellation/promview.json`. A board older than 5 minutes there is shown dimmed. Mind that anyone passing by your screen can read it.
 
 ## How it works
 

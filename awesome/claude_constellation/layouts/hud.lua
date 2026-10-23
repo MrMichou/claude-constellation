@@ -102,7 +102,6 @@ local function board(K, cr, x0, y0, x1, y1, f)
   if P.ok and (P.total or 0) == 0 then
     K.text(cr, "No firing alerts", x + 20, y0 + 62, 16, C.kind.shell, 1)
   end
-  if f.private then return end -- no alert names or hosts on the lock screen
 
   -- Cards: as many columns as fit at 300px or more; they grow to fill the height (more places
   -- listed) when there are few, and stop at 104px, past which the last slot counts the rest.
