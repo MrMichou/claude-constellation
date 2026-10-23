@@ -62,7 +62,7 @@ function callback() {
     server.on("request", (req, res) => {
       const url = new URL(req.url, "http://127.0.0.1");
       const found = url.pathname === "/callback" && url.searchParams.get("code");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
       res.end('<!doctype html><meta charset="utf-8"><title>Promview</title>'
         + '<body style="font-family:system-ui;padding:2rem">'
         + (found ? "Signed in. You can close this tab.<script>window.close()</script>"
@@ -94,7 +94,11 @@ async function main() {
   if (browser) spawn("xdg-open", [String(login)], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 
   let code;
-  try { code = await cb.code; } catch (err) { die(err.message); } finally { cb.server.close(); }
+  try { code = await cb.code; } catch (err) { die(err.message); } finally {
+    // Node < 19 leaves keep-alive sockets open on close(), holding the process up for 5 s.
+    cb.server.close();
+    if (cb.server.closeAllConnections) cb.server.closeAllConnections();
+  }
 
   const ex = await run("curl", [...CURL, "-H", "Content-Type: application/json", "--data-binary", "@-",
     base + "/api/v1/auth/desktop/exchange"], JSON.stringify({ code }));
