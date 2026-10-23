@@ -15,10 +15,14 @@ record() {
   ffmpeg -loglevel error -y -framerate "$3" -i "$tmp/$1/%05d.png" \
     -vf "scale=$5:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a" \
     "$out/$1.gif"
-  cp "$tmp/$1/$(ls "$tmp/$1" | sed -n "$(( $3 * 8 ))p")" "$out/$1.png"
+  # The still is the frame at 8 s, or the last one of a shorter recording.
+  n=$(ls "$tmp/$1" | wc -l)
+  i=$(( $3 * 8 < n ? $3 * 8 : n ))
+  cp "$tmp/$1/$(ls "$tmp/$1" | sed -n "${i}p")" "$out/$1.png"
 }
 
 record constellation wallpaper 15 12 960
 record lock lock 15 8 800
 record layouts layouts 15 20 960
+record promview promview 15 4 960
 ls -la "$out"

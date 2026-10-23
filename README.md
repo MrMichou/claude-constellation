@@ -28,7 +28,7 @@ Five more put the sessions that need you first:
 - **kanban**: columns Needs you / Working / Done / Asleep; the left one is your to-do list.
 - **radar**: the last 30 minutes as a clock face, one ring per session, the most urgent session in the middle.
 - **strip**: a band across the top of the screen, one chip per session with a 10-minute activity sparkline.
-- **hud**: a compact column on the right edge, to stay visible beside your windows.
+- **hud**: a compact column on the right edge, to stay visible beside your windows. With [Promview](#promview-alerts-in-the-hud) set up, the rest of the desktop becomes a board of its firing alerts, behind your windows.
 - **popup**: the session list as a key binding would show it over your windows (display only for now).
 
 Kanban, strip, hud and popup sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
@@ -58,6 +58,37 @@ The `pcall` keeps the key harmless if the module isn't installed. Check the key 
 
 The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts, and also applies to the lock screen, where every layout hides paths and commands.
 
+### Promview alerts in the HUD
+
+The hud layout can also turn the rest of the desktop into a board of the alerts firing in a [Promview](https://github.com/cropalato/promview) instance (an operational console for Prometheus Alertmanager), drawn behind your windows like the rest of the layer. The sessions stay on the right edge; the board fills the space left of them, under your bars:
+
+- the count of critical, warning and info alerts, in large type;
+- one card per alert name, critical first (its bar pulses), then by how many fire: the count, how long ago the newest one started (flagged "new" for 10 minutes), and the instances (or summaries) it fires on. Cards grow to list more instances when there are few, and the last slot counts the names that don't fit. A name whose alerts are all silenced is dimmed.
+
+![The hud layout with a Promview board: 3 critical, 30 warning and 3 info alerts, one card per alert name with its count, age and instances, and four Claude Code sessions on the right edge](docs/promview.gif)
+
+Point it at the server in `~/.config/claude-constellation/promview.conf`:
+
+```ini
+url = http://promview.example:8080
+interval = 30          # seconds between polls (at least 5)
+limit = 200            # alerts fetched per poll (at most 500); the counts cover every firing alert
+match = team=platform  # optional label matchers, ANDed; repeat the line for more
+match = severity!=info
+```
+
+`PROMVIEW_URL` in Awesome's environment overrides `url`. Without a url, nothing is polled. Awesome runs `curl` in the background every `interval` seconds, and only while the hud is the layout and the layer is shown, so a slow or unreachable server never holds up a frame. If a poll fails, the last alerts stay on screen, dimmed, under "unreachable". Display only: acknowledging and silencing stay in the Promview console.
+
+A server in open mode (anonymous read access) needs nothing more. One that requires an OIDC sign-in needs a session:
+
+```sh
+constellation-promview-login        # or: constellation-promview-login https://promview.example
+```
+
+It opens your browser on the Promview sign-in, as the Promview desktop client does (`desktop_redirect` to a loopback port), trades the returned code for a Promview session token and stores it in your keyring with `secret-tool` (`service claude-constellation-promview server <url>`), then asks Awesome to poll again. Each poll looks the token up and hands it to `curl` on stdin, so it never appears in a file or on a command line. A Promview session lasts 12 hours: once it expires, the HUD says "sign in needed" and you run the command again. It needs `secret-tool` (libsecret) and an unlocked keyring.
+
+The lock screen shows the same board, alert names and hosts included, so you can see what's firing without unlocking: Awesome keeps polling while the screen is locked and hands each result to the saver through `~/.cache/claude-constellation/promview.json`. A board older than 5 minutes there is shown dimmed. Mind that anyone passing by your screen can read it.
+
 ## How it works
 
 - `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls) and deletes the file on `SessionEnd`.
@@ -73,7 +104,7 @@ The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts,
 ## Installation
 
 ```sh
-node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-layout command
+node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-layout and constellation-promview-login commands
 # then in ~/.config/awesome/rc.lua, after beautiful.init(...) but BEFORE require("ui")
 # (otherwise the desktop layer covers the bar):
 #   pcall(require, "ui.desktop.claude_constellation")
@@ -112,7 +143,7 @@ npm ci && make test   # = npm test + luacheck + Lua specs
 make test-docker      # luacheck + Lua specs in the CI's Arch container (no local busted/luacheck needed)
 ```
 
-- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` (states, history, the tool-call timeline, resumed sessions) and `install.js` (hooks, links, the `constellation-layout` command) against a throwaway `$HOME`.
+- `test/` (vitest): unit tests of the hook's pure helpers (tool classification, tmux target and shared-file detection, false positives) and end-to-end runs of `hooks/track.js` (states, history, the tool-call timeline, resumed sessions) and `install.js` (hooks, links, the `constellation-layout` and `constellation-promview-login` commands) against a throwaway `$HOME`, and `constellation-promview-login` against a fake Promview.
 - `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading (hook files and Claude Code's registry), battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links, the battery freeze, every layout (each state, static and private, ordering by urgency) and the remembered layout, asserted through a recording cairo context, plus real cairo frames for every layout and sprite-asset checks; `saver.lua` refuses to run without a window, and its sh prologue picks the first Lua with lgi (fake interpreters on `PATH`).
 - The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
