@@ -12,6 +12,7 @@ local GLib = lgi.GLib
 
 local MODULE_DIR = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 local R = dofile(MODULE_DIR .. "render.lua")
+local Promview = dofile(MODULE_DIR .. "promview.lua")
 
 -- On battery: "static" freezes everything but the Clawd emotes, "off" hides the layer.
 local ON_BATTERY = "static"
@@ -49,17 +50,27 @@ local backend = resolve_backend()
 -- Animated surface: one desktop-type wibox on the primary screen, below every client.
 local canvas = wibox.widget.base.make_widget()
 function canvas:fit(_, width, height) return width, height end
+
+-- The screen's workarea (what the bars leave), relative to the screen.
+local function area(s)
+  if not s then return nil end
+  local g, wa = s.geometry, s.workarea
+  return { x = wa.x - g.x, y = wa.y - g.y, w = wa.width, h = wa.height }
+end
+
+local box
 function canvas:draw(_, cr, width, height)
-  local ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+  local opts = { static = static, layout = layout, backend = backend, area = area(box and box.screen) }
+  local ok, err = pcall(R.draw, cr, width, height, opts)
   if not ok and backend == "gpu" and backend_choice == "auto" then
     gpu_failed, backend = true, "cpu"
     gears.debug.print_warning("claude_constellation: GPU frame failed, using the CPU: " .. tostring(err))
-    ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+    opts.backend = backend
+    ok, err = pcall(R.draw, cr, width, height, opts)
   end
   if not ok then gears.debug.print_warning("claude_constellation: " .. tostring(err)) end
 end
 
-local box
 local function place(s)
   if not s then return end
   if not box then
@@ -103,13 +114,43 @@ gears.timer {
     local visible = not user_hidden and not (battery and ON_BATTERY == "off")
     if box then box.visible = visible end
 
-    if not visible or count == 0 then
+    local alerts_shown = layout == "hud" and R.alerts() ~= nil
+    if not visible or (count == 0 and not alerts_shown) then
       if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
       return
     end
     local want = 1 / ((active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
     if anim.timeout ~= want or not anim.started then anim.timeout = want; anim:again() end
   end,
+}
+
+-- Promview alerts for the HUD: polled in the background with curl, only while the HUD is
+-- the layout and the layer is shown. A failed poll keeps the last alerts, dimmed.
+local promview = Promview.read_config()
+local promview_busy, promview_last = false, 0
+local function promview_poll()
+  if not promview or promview_busy or layout ~= "hud" or not (box and box.visible) then return end
+  promview_busy, promview_last = true, os.time()
+  awful.spawn.easy_async(Promview.command(promview), function(stdout, stderr, _, code)
+    promview_busy = false
+    local state, err, auth
+    if code == 0 then state, err = Promview.parse(stdout) else err, auth = Promview.failure(stderr, code) end
+    if state then
+      state.ok, state.fetched = true, os.time()
+    else
+      local prev = R.alerts() or {}
+      state = { ok = false, fetched = prev.fetched, alerts = prev.alerts or {},
+        counts = prev.counts or {}, total = prev.total or 0, error = err, auth = auth }
+    end
+    R.set_alerts(state)
+    pcall(R.write_alert_counts, state)
+    redraw()
+  end)
+end
+local CONNECTING = { ok = false, alerts = {}, counts = {}, total = 0 } -- until the first poll
+if promview then R.set_alerts(CONNECTING) end
+local promview_timer = gears.timer {
+  timeout = promview and promview.interval or 30, autostart = true, call_now = true, callback = promview_poll,
 }
 
 -- Render one frame into a root-sized PNG (the constellation on the primary screen, black
@@ -123,7 +164,8 @@ local function snapshot(path, private)
     cr:set_source_rgb(0, 0, 0); cr:paint()
     cr:translate(g.x, g.y)
     cr:rectangle(0, 0, g.width, g.height); cr:clip()
-    R.draw(cr, g.width, g.height, { private = private, static = static, layout = layout })
+    R.draw(cr, g.width, g.height,
+      { private = private, static = static, layout = layout, area = area(screen.primary) })
     assert(surf:write_to_png(path) == "SUCCESS")
     surf:finish()
   end)
@@ -158,6 +200,7 @@ local function set_layout(name)
   if not known then return layout end
   layout = name
   R.write_layout(name)
+  if os.time() - promview_last > 5 then promview_poll() end
   canvas:emit_signal("widget::redraw_needed")
   local ok, naughty = pcall(require, "naughty")
   if ok then naughty.notify({ title = "Claude constellation", text = "Layout: " .. name, timeout = 2 }) end
@@ -190,6 +233,15 @@ return {
   backend = function() return backend_choice, backend end,
   lock = lock,
   snapshot = snapshot,
+  -- Poll Promview now (constellation-promview-login calls it after signing in).
+  promview_refresh = function()
+    promview = Promview.read_config()
+    if not promview then R.set_alerts(nil); redraw(); return end
+    if not R.alerts() then R.set_alerts(CONNECTING) end
+    promview_timer.timeout = promview.interval
+    promview_timer:again()
+    promview_poll()
+  end,
   toggle = function()
     user_hidden = not user_hidden
     if box then box.visible = not user_hidden end

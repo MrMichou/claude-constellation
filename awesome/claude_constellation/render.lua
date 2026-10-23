@@ -579,7 +579,9 @@ end
 
 -- Layouts ----------------------------------------------------------------------------------------
 -- Each layouts/<name>.lua returns function(K, cr, w, h, f), f being the frame:
--- { t, ta (animation clock, frozen while static), static, private, list (sessions), links, gen }.
+-- { t, ta (animation clock, frozen while static), static, private, list (sessions), links, gen,
+-- alerts (Promview, see R.set_alerts), area (the screen's workarea {x, y, w, h}: what the bars
+-- leave, nil for the whole frame) }.
 R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud", "popup" }
 local layouts = {}
 for _, name in ipairs(R.LAYOUTS) do layouts[name] = dofile(DIR .. "layouts/" .. name .. ".lua") end
@@ -609,11 +611,35 @@ function R.write_backend(name)
   return true
 end
 
+-- Promview alerts shown by the HUD (see promview.lua): nil while Promview is off, else
+-- { ok, error, fetched, alerts, counts = {critical, warning, info}, total }. Set by init.lua
+-- after each poll; the lock-screen saver only gets the counts, through ALERTS_FILE.
+local alerts
+function R.set_alerts(state) alerts = state end
+function R.alerts() return alerts end
+
+-- Counts only (no names or hosts on the lock screen), flat for json.encode.
+function R.write_alert_counts(state)
+  local c = state and state.counts or {}
+  return R.write_json(R.CACHE_DIR .. "promview.json", {
+    ok = state ~= nil and state.ok == true, fetched = state and state.fetched or 0,
+    critical = c.critical or 0, warning = c.warning or 0, info = c.info or 0,
+  })
+end
+function R.read_alert_counts()
+  local d = R.read_json(R.CACHE_DIR .. "promview.json")
+  if type(d) ~= "table" or d.ok == nil then return nil end
+  return { ok = d.ok == true, fetched = tonumber(d.fetched) or 0, alerts = {},
+    counts = { critical = tonumber(d.critical) or 0, warning = tonumber(d.warning) or 0,
+      info = tonumber(d.info) or 0 } }
+end
+
 -- Draw one frame. opts.layout picks the presentation (constellation by default);
 -- opts.static freezes everything but the Clawd emotes (battery mode); opts.private drops what
 -- could leak on a lock screen: paths, commands and the tool target. opts.backend is "gpu" or
 -- "cpu" (the default; see R.resolve_backend): on the CPU, a target that isn't an image (an X
--- surface) gets the frame from an in-memory buffer, in one paint.
+-- surface) gets the frame from an in-memory buffer, in one paint. opts.area is the screen's
+-- workarea (see Layouts).
 local cpu_buf, cpu_cr
 function R.draw(cr, w, h, opts)
   opts = opts or {}
@@ -632,7 +658,7 @@ function R.draw(cr, w, h, opts)
   end
   local t = now()
   local f = { t = t, ta = opts.static and 0 or t, static = opts.static, private = opts.private,
-    list = {}, links = links, gen = generation }
+    list = {}, links = links, gen = generation, alerts = alerts, area = opts.area }
   for i, sid in ipairs(order) do
     local s = sessions[sid]
     s.stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)

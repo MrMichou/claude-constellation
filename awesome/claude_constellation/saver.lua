@@ -81,10 +81,14 @@ end
 
 local function poll()
   local active, count = R.read_sessions()
+  -- Promview counts written by the desktop layer, only shown by the HUD; old ones are stale.
+  local alerts = layout == "hud" and R.read_alert_counts() or nil
+  if alerts and os.time() - alerts.fetched > 300 then alerts.ok, alerts.error = false, "stale" end
+  R.set_alerts(alerts)
   static = R.on_battery()
   if backend_choice == "auto" then backend = R.resolve_backend("auto") end
   -- No session: an empty background, repainted once a second in case the window was exposed.
-  schedule(count == 0 and 1 or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
+  schedule((count == 0 and not alerts) and 1 or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
   collectgarbage("step") -- per-frame cairo contexts are only freed by the GC
   return true
 end
