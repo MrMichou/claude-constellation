@@ -6,6 +6,8 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-23
+
 ### Added
 - **Animated AwesomeWM wallpaper.** Every active Claude Code session is a glowing node on a `type = "desktop"` wibox, pulsing with its state (thinking, tool, pending permission, done/idle); its last 10 targets (files, shell, search, web, MCP, agents) orbit as colour-coded satellites, with a pulse along the link on every tool call. Inactive sessions dim after 10 min and hide after 3 h.
 - **Clawd emotes** per session state (thinking, typing, listening, birthday, sleeping), as in claude-status-bar.
