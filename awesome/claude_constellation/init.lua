@@ -13,6 +13,7 @@ local GLib = lgi.GLib
 local MODULE_DIR = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 local R = dofile(MODULE_DIR .. "render.lua")
 local Promview = dofile(MODULE_DIR .. "promview.lua")
+local PromviewBus = dofile(MODULE_DIR .. "promview_bus.lua")
 
 -- On battery: "static" freezes everything but the Clawd emotes, "off" hides the layer.
 local ON_BATTERY = "static"
@@ -124,34 +125,69 @@ gears.timer {
   end,
 }
 
--- Promview alerts for the HUD: polled in the background with curl, only while the HUD is
--- the layout and the layer is shown. A failed poll keeps the last alerts, dimmed.
+-- Promview alerts for the HUD, only while the HUD is the layout and the layer is shown. Asked of a
+-- running promview-desktop over the session bus when there is one (it pushes AlertsChanged, so the
+-- timer is only a slow fallback), else polled in the background with curl. A failed poll keeps the
+-- last alerts, dimmed.
 local promview = Promview.read_config()
-local promview_busy, promview_last = false, 0
-local function promview_poll()
-  if not promview or promview_busy or layout ~= "hud" or not (box and box.visible) then return end
+local promview_busy, promview_last, promview_again = false, 0, false
+local promview_bus -- set below, once the poll and its timer exist
+local promview_poll
+local FALLBACK_INTERVAL = 120 -- seconds between polls while the desktop is pushing changes
+local function promview_via_bus()
+  return promview and promview.desktop ~= "off" and promview_bus and promview_bus:owned()
+end
+local function promview_done(body, err, auth)
+  promview_busy = false
+  local state
+  if body then state, err = Promview.parse(body) end
+  if state then
+    state.ok, state.fetched = true, os.time()
+  else
+    local prev = R.alerts() or {}
+    state = { ok = false, fetched = prev.fetched, alerts = prev.alerts or {},
+      counts = prev.counts or {}, total = prev.total or 0, error = err, auth = auth }
+  end
+  R.set_alerts(state)
+  pcall(R.write_alerts, state)
+  redraw()
+  -- A change that arrived while this read was in flight may not be in it.
+  if promview_again then promview_again = false; promview_poll() end
+end
+function promview_poll()
+  if not promview or layout ~= "hud" or not (box and box.visible) then return end
+  if promview_busy then promview_again = true; return end
   promview_busy, promview_last = true, os.time()
-  awful.spawn.easy_async(Promview.command(promview), function(stdout, stderr, _, code)
-    promview_busy = false
-    local state, err, auth
-    if code == 0 then state, err = Promview.parse(stdout) else err, auth = Promview.failure(stderr, code) end
-    if state then
-      state.ok, state.fetched = true, os.time()
-    else
-      local prev = R.alerts() or {}
-      state = { ok = false, fetched = prev.fetched, alerts = prev.alerts or {},
-        counts = prev.counts or {}, total = prev.total or 0, error = err, auth = auth }
-    end
-    R.set_alerts(state)
-    pcall(R.write_alerts, state)
-    redraw()
-  end)
+  if promview_via_bus() then
+    promview_bus:get_alerts(promview, promview_done)
+  elseif promview.url then
+    awful.spawn.easy_async(Promview.command(promview), function(stdout, stderr, _, code)
+      if code == 0 then return promview_done(stdout) end
+      local err, auth = Promview.failure(stderr, code)
+      promview_done(nil, err, auth)
+    end)
+  else
+    promview_done(nil, "promview-desktop is not running")
+  end
 end
 local CONNECTING = { ok = false, alerts = {}, counts = {}, total = 0 } -- until the first poll
 if promview then R.set_alerts(CONNECTING) end
 local promview_timer = gears.timer {
   timeout = promview and promview.interval or 30, autostart = true, call_now = true, callback = promview_poll,
 }
+-- Slow while the desktop pushes changes, the configured interval otherwise.
+local function promview_pace()
+  if not promview then return end
+  local want = promview.interval
+  if promview_via_bus() then want = math.max(want, FALLBACK_INTERVAL) end
+  if promview_timer.timeout ~= want then promview_timer.timeout = want; promview_timer:again() end
+end
+if promview and promview.desktop ~= "off" then
+  promview_bus = PromviewBus.open_safe({
+    on_owner = function() promview_pace(); promview_poll() end,
+    on_change = promview_poll,
+  })
+end
 
 -- Render one frame into a root-sized PNG (the constellation on the primary screen, black
 -- elsewhere), e.g. as an i3lock image: `i3lock -c 000000 -i <path>`. Returns true on success.
@@ -238,8 +274,13 @@ return {
     promview = Promview.read_config()
     if not promview then R.set_alerts(nil); pcall(R.write_alerts, nil); redraw(); return end
     if not R.alerts() then R.set_alerts(CONNECTING) end
+    if promview.desktop ~= "off" and not promview_bus then
+      promview_bus = PromviewBus.open_safe({ on_owner = function() promview_pace(); promview_poll() end,
+        on_change = promview_poll })
+    end
     promview_timer.timeout = promview.interval
     promview_timer:again()
+    promview_pace()
     promview_poll()
   end,
   toggle = function()
