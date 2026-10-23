@@ -672,8 +672,8 @@ end
 -- opts.static freezes everything but the Clawd emotes (battery mode); opts.private drops what
 -- could leak on a lock screen: paths, commands and the tool target (Promview alerts stay).
 -- opts.backend is "gpu" or "cpu" (the default; see R.resolve_backend): on the CPU, a target that
--- isn't an image (an X surface) gets the frame from an in-memory buffer, in one paint. opts.area is the screen's
--- workarea (see Layouts).
+-- isn't an image (an X surface) gets the frame from an in-memory buffer, in one paint.
+-- opts.area is the screen's workarea (see Layouts).
 local cpu_buf, cpu_cr
 function R.draw(cr, w, h, opts)
   opts = opts or {}
