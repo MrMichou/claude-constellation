@@ -159,6 +159,70 @@ describe("track.js hook", () => {
     expect(fs.readdirSync(h.dataDir)).toEqual(["s1.json"]);
   });
 
+  describe("parallel calls and subagents (same session id)", () => {
+    const call = (event, id, tool_name, tool_input, cwd = "/work/proj") =>
+      hook(event, { session_id: "s1", cwd, tool_use_id: id, tool_name, tool_input });
+
+    it("keeps the project when a subagent runs in a worktree", async () => {
+      await hook("prompt", { session_id: "s1", cwd: "/work/proj" });
+      await call("pre", "t1", "Bash", { command: "ls" }, "/work/proj/.claude/worktrees/agent-ae2b");
+      await call("pre", "t2", "Bash", { command: "ls" }, "/work/proj/.claude/worktrees/agent-ae2b/lib");
+      expect(state().project).toBe("proj");
+    });
+
+    it("repairs a name taken from a worktree by an older hook", async () => {
+      fs.mkdirSync(h.dataDir, { recursive: true });
+      fs.writeFileSync(stateFile("s1"), JSON.stringify({ sid: "s1", project: "agent-ae2b" }));
+      await call("pre", "t1", "Bash", { command: "ls" }, "/work/proj/.claude/worktrees/agent-ae2b");
+      expect(state().project).toBe("proj");
+    });
+
+    it("names a session started in a worktree after its repo", async () => {
+      await hook("start", { session_id: "s1", cwd: "/work/proj/.claude/worktrees/agent-1" });
+      expect(state().project).toBe("proj");
+    });
+
+    it("closes only the finished call and stays on the one still running", async () => {
+      await call("pre", "a", "Agent", { subagent_type: "Explore" });
+      await call("pre", "b", "Read", { file_path: "/x/a.txt" });
+      await call("pre", "c", "Grep", { pattern: "foo" });
+      await call("post", "c");
+      let tl = state().timeline;
+      expect(tl.map((e) => e.e === undefined)).toEqual([true, true, false]);
+      expect(state()).toMatchObject({ state: "tool", tool: "Read", target: "/x/a.txt" });
+      await call("post", "b");
+      expect(state()).toMatchObject({ state: "tool", tool: "Agent", kind: "agent" });
+      await call("post", "a");
+      tl = state().timeline;
+      expect(tl.every((e) => e.e >= e.s)).toBe(true);
+      expect(state().state).toBe("thinking");
+    });
+
+    it("still names a running call that has left the 10-call history", async () => {
+      await call("pre", "long", "Bash", { command: "npm test" });
+      for (let i = 0; i < 12; i++) {
+        await call("pre", "q" + i, "Grep", { pattern: "p" + i });
+        await call("post", "q" + i);
+      }
+      expect(state().history.map((x) => x.target)).not.toContain("npm test");
+      expect(state()).toMatchObject({ state: "tool", tool: "Bash", kind: "shell", target: "npm test" });
+    });
+
+    it("keeps the label only while the call runs", async () => {
+      await call("pre", "a", "Read", { file_path: "/x/a.txt" });
+      expect(state().timeline[0]).toMatchObject({ id: "a", t: "Read", g: "/x/a.txt" });
+      await call("post", "a");
+      expect(state().timeline[0]).not.toHaveProperty("t");
+      expect(state().timeline[0]).not.toHaveProperty("g");
+    });
+
+    it("stop closes calls whose post never came", async () => {
+      await call("pre", "a", "Bash", { command: "sleep 9" });
+      await hook("stop", { session_id: "s1" });
+      expect(state().timeline[0].e).toBeGreaterThanOrEqual(state().timeline[0].s);
+    });
+  });
+
   describe("shared-resource links", () => {
     it("records tmux sessions and files another session may share", async () => {
       await pre("Bash", { command: "P=0:0; tmux send-keys -t $P ls Enter" });
