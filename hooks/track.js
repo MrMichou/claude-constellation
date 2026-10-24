@@ -153,9 +153,10 @@ function run(event, p) {
     default: return;
   }
 
-  fs.mkdirSync(dir, { recursive: true });
+  // Private: session files hold the start of shell commands, which may contain secrets.
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = file + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(s));
+  fs.writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 

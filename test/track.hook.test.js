@@ -34,6 +34,12 @@ describe("track.js hook", () => {
     expect(after.ts).toBeGreaterThanOrEqual(before.ts);
   });
 
+  it("keeps the data dir and session files private to the user", async () => {
+    await pre("Bash", { command: "curl -H 'Authorization: x'" });
+    expect(fs.statSync(h.dataDir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(stateFile("s1")).mode & 0o777).toBe(0o600);
+  });
+
   it("prompt marks the session as thinking and records the project", async () => {
     const r = await hook("prompt", { session_id: "s1", cwd: "/work/my-proj" });
     expect(r.code).toBe(0);
