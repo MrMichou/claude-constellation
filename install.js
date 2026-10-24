@@ -29,6 +29,8 @@ const EVENTS = {
   SessionEnd: "end",
 };
 const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest"]);
+// Hook commands run through a shell: quote paths so a checkout path with spaces still works.
+const sh = (s) => `'${s.replace(/'/g, "'\\''")}'`;
 
 // A fresh machine may have no settings.json yet: start from {} (and keep a backup otherwise).
 let settings = {};
@@ -45,7 +47,7 @@ for (const [evt, arg] of Object.entries(EVENTS)) {
     .map((e) => ({ ...e, hooks: (e.hooks || []).filter((h) => !(h.command || "").includes(track)) }))
     .filter((e) => e.hooks.length > 0);
   if (!uninstall) {
-    const entry = { hooks: [{ type: "command", command: `${process.execPath} ${track} ${arg}` }] };
+    const entry = { hooks: [{ type: "command", command: `${sh(process.execPath)} ${sh(track)} ${arg}` }] };
     if (MATCHER.has(evt)) entry.matcher = "*";
     entries.push(entry);
   }

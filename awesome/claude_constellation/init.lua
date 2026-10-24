@@ -138,7 +138,8 @@ local function lock()
     return
   end
   local cmd = { "i3lock", "-c", "000000" }
-  local img = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/constellation-lock.png"
+  -- Per-user dir (XDG_RUNTIME_DIR, else ~/.cache): a fixed /tmp path could be pre-planted as a symlink.
+  local img = GLib.get_user_runtime_dir() .. "/constellation-lock.png"
   if snapshot(img, true) then
     table.insert(cmd, "-i")
     table.insert(cmd, img)

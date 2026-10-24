@@ -31,8 +31,8 @@ describe("install.js", () => {
   it("passes the right event argument and matcher", async () => {
     await install();
     const hooks = readJson(h.settings).hooks;
-    expect(ours(hooks.PreToolUse)[0].command).toMatch(/track\.js pre$/);
-    expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js end$/);
+    expect(ours(hooks.PreToolUse)[0].command).toMatch(/track\.js' pre$/);
+    expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js' end$/);
     expect(hooks.PreToolUse.at(-1).matcher).toBe("*");
     expect(hooks.Stop.at(-1).matcher).toBeUndefined();
   });
