@@ -5,6 +5,8 @@
 local json = {}
 
 local function skip_ws(s, i)
+  local b = s:byte(i)
+  if b ~= 32 and b ~= 9 and b ~= 13 and b ~= 10 then return i end -- the common case: no blank
   local _, e = s:find("^[ \t\r\n]*", i)
   return (e or i - 1) + 1
 end
@@ -17,38 +19,39 @@ local function decode_string(s, i)
   -- s:sub(i) == '"...'
   i = i + 1
   local buf, n = {}, 0
-  while i <= #s do
-    local c = s:sub(i, i)
-    if c == '"' then
-      return table.concat(buf), i + 1
-    elseif c == '\\' then
-      local nc = s:sub(i + 1, i + 1)
-      if nc == 'u' then
-        local hex = s:sub(i + 2, i + 5)
-        local cp = tonumber(hex, 16)
-        if not cp then return nil, "bad \\u escape" end
-        -- UTF-8 encode (BMP only; good enough for our labels like "…").
-        local out
-        if cp < 0x80 then
-          out = string.char(cp)
-        elseif cp < 0x800 then
-          out = string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
-        else
-          out = string.char(0xE0 + math.floor(cp / 0x1000),
-            0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
-        end
-        n = n + 1; buf[n] = out
-        i = i + 6
+  while true do
+    -- Copy the run up to the next quote or backslash in one go; most strings have no escape
+    -- at all and come back as a single sub().
+    local j = s:find('["\\]', i)
+    if not j then return nil, "unterminated string" end
+    if s:byte(j) == 34 then -- '"'
+      if n == 0 then return s:sub(i, j - 1), j + 1 end
+      n = n + 1; buf[n] = s:sub(i, j - 1)
+      return table.concat(buf), j + 1
+    end
+    if j > i then n = n + 1; buf[n] = s:sub(i, j - 1) end
+    local nc = s:sub(j + 1, j + 1)
+    if nc == 'u' then
+      local hex = s:sub(j + 2, j + 5)
+      local cp = tonumber(hex, 16)
+      if not cp then return nil, "bad \\u escape" end
+      -- UTF-8 encode (BMP only; good enough for our labels like "…").
+      local out
+      if cp < 0x80 then
+        out = string.char(cp)
+      elseif cp < 0x800 then
+        out = string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
       else
-        n = n + 1; buf[n] = escapes[nc] or nc
-        i = i + 2
+        out = string.char(0xE0 + math.floor(cp / 0x1000),
+          0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
       end
+      n = n + 1; buf[n] = out
+      i = j + 6
     else
-      n = n + 1; buf[n] = c
-      i = i + 1
+      n = n + 1; buf[n] = escapes[nc] or nc
+      i = j + 2
     end
   end
-  return nil, "unterminated string"
 end
 
 local function decode_number(s, i)
@@ -98,14 +101,14 @@ end
 
 decode_value = function(s, i)
   i = skip_ws(s, i)
-  local c = s:sub(i, i)
-  if c == '"' then return decode_string(s, i)
-  elseif c == '{' then return decode_object(s, i)
-  elseif c == '[' then return decode_array(s, i)
-  elseif c == 't' and s:sub(i, i + 3) == "true" then return true, i + 4
-  elseif c == 'f' and s:sub(i, i + 4) == "false" then return false, i + 5
-  elseif c == 'n' and s:sub(i, i + 3) == "null" then return nil, i + 4
-  elseif c:match("[%-%d]") then return decode_number(s, i)
+  local b = s:byte(i) -- dispatch on the byte: no substring or pattern per value
+  if b == 34 then return decode_string(s, i) -- "
+  elseif b == 123 then return decode_object(s, i) -- {
+  elseif b == 91 then return decode_array(s, i) -- [
+  elseif b == 45 or (b and b >= 48 and b <= 57) then return decode_number(s, i) -- - 0-9
+  elseif b == 116 and s:sub(i, i + 3) == "true" then return true, i + 4
+  elseif b == 102 and s:sub(i, i + 4) == "false" then return false, i + 5
+  elseif b == 110 and s:sub(i, i + 3) == "null" then return nil, i + 4
   end
   return nil, "unexpected character at " .. i
 end

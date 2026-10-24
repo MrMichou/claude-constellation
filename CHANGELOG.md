@@ -6,6 +6,13 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+### Changed
+- **Cheaper lanes and radar frames.** Both layouts drew one shape per tool call, hundreds per frame. The lanes now draw a session's finished calls once into a strip and slide it; the radar strokes its rings once and blits them until they would have turned half a pixel (every ~0.3 s), so each frame is pixel-identical to drawing them live. With 6 sessions at 1920×1080 on the CPU: lanes 12.3 → 3.4 ms, radar 15.4 → 1.8 ms per frame.
+- **Faster session-file parsing**: the JSON decoder copies plain string runs in one go and dispatches on bytes (~30% less time per file).
+
+### Fixed
+- The CPU backend always drew into an intermediate image and copied it, even when the target was an image already (the lock-screen saver, `snapshot()`, the demos and the specs): the surface type comparison could never match. One full-frame copy less per frame there.
+
 ## [0.1.0] - 2026-10-23
 
 ### Added

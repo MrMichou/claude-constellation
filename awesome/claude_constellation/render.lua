@@ -416,6 +416,15 @@ end
 
 function K.kind_color(kind) return C.kind[kind] or C.kind.other end
 
+-- An offscreen surface for what a layout caches across frames, with a context to draw into
+-- it; made similar to the target on the GPU (see `offscreen`). A cache keyed on K.backend()
+-- follows a backend switch, as the cached glows and sprites do.
+function K.offscreen(cr, w, h)
+  local surf = offscreen(cr, w, h)
+  return surf, cairo.Context(surf)
+end
+function K.backend() return backend end
+
 -- Emote for a session's state, plus whether it loops (the resting crab is a still pose).
 local function emote(s, t)
   if is_active(s) or s.state == "waiting" then return CLAWD[s.state], true end
@@ -621,7 +630,7 @@ function R.draw(cr, w, h, opts)
   local out = cr
   if backend == "cpu" then
     local ok, target = pcall(function() return cr:get_target() end)
-    if ok and target and target.type ~= cairo.SurfaceType.IMAGE then
+    if ok and target and target.type ~= "IMAGE" then -- lgi exposes the type as a string
       local bw, bh = math.ceil(w), math.ceil(h)
       if not cpu_buf or cpu_buf:get_width() ~= bw or cpu_buf:get_height() ~= bh then
         cpu_buf = cairo.ImageSurface.create(cairo.Format.RGB24, bw, bh) -- the background is opaque
