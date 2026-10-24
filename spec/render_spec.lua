@@ -1,5 +1,5 @@
 -- Specs for render.lua: session loading, power detection, palette, and what draw() puts on
--- screen (labels, private mode, shared-resource links, battery freeze), asserted through a
+-- screen (labels, private mode, shared-resource links, battery freeze, eco mode), asserted through a
 -- recording cairo context, plus a real cairo smoke test and sprite asset checks.
 local H = require("spec.helpers")
 local lgi = require("lgi")
@@ -399,6 +399,42 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("eco mode (still)", function()
+    -- The surfaces painted in a frame: glows and the Clawd emote frames, in order.
+    local function painted(opts)
+      local cr = H.recorder()
+      local seen = {}
+      function cr.set_source_surface(_, surf) seen[#seen + 1] = tostring(surf) end
+      R.draw(cr, 1920, 1080, opts)
+      assert.is_true(#seen > 0)
+      return table.concat(seen, ";")
+    end
+
+    before_each(function()
+      H.session(data, "a", { state = "thinking" })
+      R.read_sessions()
+    end)
+
+    it("freezes the Clawd emotes too", function()
+      local first = painted({ still = true })
+      GLib.usleep(300000)
+      assert.are.equal(first, painted({ still = true }))
+    end)
+
+    it("static alone still animates them", function()
+      local first = painted({ static = true })
+      GLib.usleep(300000)
+      assert.are_not.equal(first, painted({ static = true }))
+    end)
+
+    it("is on when asked, or in auto on battery", function()
+      assert.is_true(R.eco_active("on", false))
+      assert.is_true(R.eco_active("auto", true))
+      assert.is_false(R.eco_active("auto", false))
+      assert.is_false(R.eco_active("off", true))
+    end)
+  end)
+
   describe("layouts", function()
     local function link(kind, label) return { kind = kind, label = label, ts = os.time() } end
     local now = os.time()
@@ -502,6 +538,14 @@ describe("render.lua", function()
       assert.are.equal("cpu", R.read_backend())
       H.write(cache .. "backend", "tpu\n")
       assert.are.equal("auto", R.read_backend())
+    end)
+
+    it("eco mode defaults to auto, is remembered, and an unknown value falls back to auto", function()
+      assert.are.equal("auto", R.read_eco())
+      assert.is_true(R.write_eco("on"))
+      assert.are.equal("on", R.read_eco())
+      H.write(cache .. "eco", "max\n")
+      assert.are.equal("auto", R.read_eco())
     end)
 
     it("is remembered, and an unknown value falls back to the default", function()

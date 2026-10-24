@@ -1,0 +1,20 @@
+#!/bin/sh
+# Switch the claude-constellation eco mode in the running AwesomeWM (nothing moves, 1 frame/s).
+# Usage: constellation-eco [toggle|on|off|auto]   (auto: on battery only; no argument: show it)
+set -eu
+case "${1:-}" in
+  -h|--help) sed -n '2,3s/^# //p' "$0"; exit 0 ;;
+  "") call="local c, on = cc.eco()" ;;
+  toggle|on|off|auto) call="local c, on = cc.set_eco('$1')" ;;
+  *) echo "constellation-eco: unknown mode '$1'" >&2; sed -n '3s/^# //p' "$0" >&2; exit 2 ;;
+esac
+out=$(awesome-client "local ok, cc = pcall(require, 'ui.desktop.claude_constellation')
+  if not ok or not cc.set_eco then return 'error: module not loaded' end
+  $call
+  return c .. (on and ' (on)' or ' (off)')")
+# awesome-client prints e.g.:   string "auto (off)"
+mode=$(printf '%s\n' "$out" | sed -n 's/.*string "\(.*\)".*/\1/p')
+case "$mode" in
+  ""|error:*) echo "constellation-eco: ${mode:-no answer from awesome-client}" >&2; exit 1 ;;
+  *) echo "$mode" ;;
+esac
