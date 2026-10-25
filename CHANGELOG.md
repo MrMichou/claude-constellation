@@ -6,6 +6,8 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Added
 - **Eco mode** (`constellation-eco [toggle|on|off|auto]`, or `set_eco()`): nothing moves, not even the Clawd emotes, and one frame a second follows the sessions; about 3% of a CPU core instead of 10% with a working session. `auto`, the default, turns it on while on battery (instead of the 8 fps freeze), and the lock screen follows the same choice. `install.js` links the new command (#14).
 - **No redraws while a window covers the whole wallpaper** (maximised, fullscreen, or alone in a tiled layout); the animation resumes when it moves away (#14).
