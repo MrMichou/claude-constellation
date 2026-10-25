@@ -15,8 +15,11 @@ const track = path.join(__dirname, "hooks", "track.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const linkDir = path.join(home, ".config", "awesome", "ui", "desktop");
 const link = path.join(linkDir, "claude_constellation");
-const cmd = path.join(__dirname, "bin", "constellation-layout");
-const cmdLink = path.join(home, ".local", "bin", "constellation-layout");
+// Commands linked into ~/.local/bin, with what they do.
+const COMMANDS = {
+  "constellation-layout": "switch layouts: constellation-layout [next|lanes|cards|...]",
+  "constellation-eco": "eco mode: constellation-eco [toggle|on|off|auto]",
+};
 
 const EVENTS = {
   SessionStart: "start",
@@ -65,17 +68,21 @@ if (!uninstall) {
   console.log('Add to rc.lua: pcall(require, "ui.desktop.claude_constellation")');
 }
 
-// The command link is only replaced or removed when it is ours: never clobber another tool.
-let cmdTarget = null;
-try { cmdTarget = fs.readlinkSync(cmdLink); } catch {}
-const cmdFree = !fs.existsSync(cmdLink) && cmdTarget === null;
-if (cmdTarget === cmd) fs.rmSync(cmdLink, { force: true });
-if (!uninstall) {
-  if (cmdFree || cmdTarget === cmd) {
-    fs.mkdirSync(path.dirname(cmdLink), { recursive: true });
-    fs.symlinkSync(cmd, cmdLink);
-    console.log(`Linked ${cmdLink} (switch layouts: constellation-layout [next|lanes|cards|...])`);
-  } else {
-    console.log(`Skipped ${cmdLink}: it already exists and is not ours`);
+// A command link is only replaced or removed when it is ours: never clobber another tool.
+for (const [name, help] of Object.entries(COMMANDS)) {
+  const cmd = path.join(__dirname, "bin", name);
+  const cmdLink = path.join(home, ".local", "bin", name);
+  let cmdTarget = null;
+  try { cmdTarget = fs.readlinkSync(cmdLink); } catch {}
+  const cmdFree = !fs.existsSync(cmdLink) && cmdTarget === null;
+  if (cmdTarget === cmd) fs.rmSync(cmdLink, { force: true });
+  if (!uninstall) {
+    if (cmdFree || cmdTarget === cmd) {
+      fs.mkdirSync(path.dirname(cmdLink), { recursive: true });
+      fs.symlinkSync(cmd, cmdLink);
+      console.log(`Linked ${cmdLink} (${help})`);
+    } else {
+      console.log(`Skipped ${cmdLink}: it already exists and is not ours`);
+    }
   }
 }

@@ -43,7 +43,7 @@ constellation-layout prev
 constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
 ```
 
-`install.js` links the command into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 
@@ -68,7 +68,15 @@ The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts,
   ```sh
   awesome-client 'return require("ui.desktop.claude_constellation").set_backend("cpu")'   # or "gpu", "auto"
   ```
-- **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
+- **Covered by a window**: while one window covers the whole wallpaper (maximised, fullscreen, or alone in a tiled layout), nothing is redrawn; the animation resumes when it moves away. Windows Awesome draws translucent don't count, but a compositor's own transparency rules (picom `opacity-rule`) can't be seen: behind such a window the wallpaper simply stays still.
+- **Eco mode**: nothing moves, not even the Clawd emotes, and one frame a second follows the sessions. Measured on a 3-screen desktop with a working session, the wallpaper went from about 10% of a CPU core to about 3%. `auto` (the default) turns it on while on battery (system battery `Discharging`), `on` always, `off` never; the choice is remembered and applies to the lock screen too:
+
+  ```sh
+  constellation-eco          # show the mode: "auto (off)"
+  constellation-eco toggle   # or on, off, auto
+  ```
+
+  With eco `off`, a battery still freezes everything but the Clawd emotes, at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
 

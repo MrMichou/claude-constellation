@@ -33,6 +33,8 @@ pcall(function()
 end)
 
 local static = false
+-- Eco mode: the choice ("auto", "on", "off"; see set_eco) and whether it is on right now.
+local eco_choice, eco = R.read_eco(), false
 local layout = R.read_layout() -- one of R.LAYOUTS; see set_layout()
 
 -- Render backend: the choice ("auto", "gpu", "cpu"; see set_backend) and the one in use.
@@ -50,11 +52,13 @@ local backend = resolve_backend()
 local canvas = wibox.widget.base.make_widget()
 function canvas:fit(_, width, height) return width, height end
 function canvas:draw(_, cr, width, height)
-  local ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+  local opts = { static = static, still = eco, layout = layout, backend = backend }
+  local ok, err = pcall(R.draw, cr, width, height, opts)
   if not ok and backend == "gpu" and backend_choice == "auto" then
     gpu_failed, backend = true, "cpu"
     gears.debug.print_warning("claude_constellation: GPU frame failed, using the CPU: " .. tostring(err))
-    ok, err = pcall(R.draw, cr, width, height, { static = static, layout = layout, backend = backend })
+    opts.backend = backend
+    ok, err = pcall(R.draw, cr, width, height, opts)
   end
   if not ok then gears.debug.print_warning("claude_constellation: " .. tostring(err)) end
 end
@@ -80,9 +84,26 @@ place(screen.primary)
 screen.connect_signal("property::geometry", function(s) if s == screen.primary then place(s) end end)
 screen.connect_signal("primary_changed", function(s) if s == screen.primary then place(s) end end)
 
+-- A window hiding the whole layer (maximised, fullscreen, or alone in a tiled layout): nobody
+-- sees the wallpaper, so it isn't redrawn until the window moves away. Windows Awesome draws
+-- translucent don't count; a compositor's own transparency rules can't be seen from here.
+local function covered(s)
+  local wa = s.workarea
+  for _, c in ipairs(s.clients) do -- the screen's visible clients
+    if (c.opacity or 1) >= 1 then
+      local g = c:geometry()
+      local w = math.min(g.x + g.width, wa.x + wa.width) - math.max(g.x, wa.x)
+      local h = math.min(g.y + g.height, wa.y + wa.height) - math.max(g.y, wa.y)
+      if w > 0 and h > 0 and w * h >= 0.95 * wa.width * wa.height then return true end
+    end
+  end
+  return false
+end
+
 -- Redraw at a high rate only while something is happening, to spare the GPU/CPU.
--- While static (on battery) only the emotes move, so it stays at the idle rate.
--- With no session, or the layer hidden, nothing moves: no redraws at all.
+-- While static (on battery) only the emotes move, so it stays at the idle rate; in eco mode
+-- nothing moves and a frame a second follows the sessions.
+-- With no session, the layer hidden or covered by a window, nothing moves: no redraws at all.
 local user_hidden = false
 local function redraw() canvas:emit_signal("widget::redraw_needed") end
 local anim = gears.timer {
@@ -99,7 +120,8 @@ gears.timer {
     local active, count = R.read_sessions()
     backend = resolve_backend()
     local battery = R.on_battery()
-    static = battery and ON_BATTERY == "static"
+    eco = R.eco_active(eco_choice, battery)
+    static = eco or (battery and ON_BATTERY == "static")
     local visible = not user_hidden and not (battery and ON_BATTERY == "off")
     if box then box.visible = visible end
 
@@ -107,7 +129,11 @@ gears.timer {
       if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
       return
     end
-    local want = 1 / ((active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
+    if box and covered(box.screen) then
+      if anim.started then anim:stop() end -- the last frame stays, behind the window
+      return
+    end
+    local want = 1 / (eco and R.FPS_ECO or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
     if anim.timeout ~= want or not anim.started then anim.timeout = want; anim:again() end
   end,
 }
@@ -123,7 +149,7 @@ local function snapshot(path, private)
     cr:set_source_rgb(0, 0, 0); cr:paint()
     cr:translate(g.x, g.y)
     cr:rectangle(0, 0, g.width, g.height); cr:clip()
-    R.draw(cr, g.width, g.height, { private = private, static = static, layout = layout })
+    R.draw(cr, g.width, g.height, { private = private, static = static, still = eco, layout = layout })
     assert(surf:write_to_png(path) == "SUCCESS")
     surf:finish()
   end)
@@ -184,8 +210,30 @@ local function set_backend(name)
   return backend_choice, backend
 end
 
+-- Eco mode: "on", "off", "auto" (on battery) or "toggle" (on <-> off). Kept for the next start
+-- and for the lock screen. Returns the choice and whether eco is on right now.
+local function set_eco(name)
+  if name == "toggle" then name = eco and "off" or "on" end
+  local known = false
+  for _, m in ipairs(R.ECO_MODES) do if m == name then known = true end end
+  if known then
+    eco_choice = name
+    eco = R.eco_active(name, R.on_battery())
+    R.write_eco(name)
+    redraw()
+    local ok, naughty = pcall(require, "naughty")
+    if ok then
+      local now = name == "auto" and (eco and " (on: on battery)" or " (off: on mains)") or ""
+      naughty.notify({ title = "Claude constellation", text = "Eco mode: " .. name .. now, timeout = 2 })
+    end
+  end
+  return eco_choice, eco
+end
+
 return {
   set_layout = set_layout,
+  set_eco = set_eco,
+  eco = function() return eco_choice, eco end,
   layouts = R.LAYOUTS,
   set_backend = set_backend,
   backend = function() return backend_choice, backend end,
