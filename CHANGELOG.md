@@ -6,6 +6,12 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+### Security
+- **vitest 2.1 → 5.0** (dev only): clears the `npm audit` advisories in vitest, vite, esbuild and tinypool. JS tests now run on Node 22/24/26 (vitest 5 needs Node ≥ 22.12); the hook itself is unchanged.
+- **Private session files**: `~/.claude/constellation/` is created `0700` and session files are written `0600`, since they hold the start of shell commands.
+- **Lock-screen image** goes to the per-user runtime dir (GLib, falls back to `~/.cache`) instead of `/tmp` when `XDG_RUNTIME_DIR` is unset.
+- **Installer** quotes the node and hook paths in the hook commands, so a checkout path with spaces works.
+
 ## [0.1.0] - 2026-10-23
 
 ### Added
