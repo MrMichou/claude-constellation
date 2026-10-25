@@ -44,7 +44,7 @@ constellation-layout prev
 constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
 ```
 
-`install.js` links the command into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 
@@ -64,7 +64,20 @@ The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts,
 - `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls, subagents) and deletes the file on `SessionEnd`. Subagents come from `SubagentStart`/`SubagentStop` and from the `agent_id` that tool events carry when a subagent runs them, so their calls never show up as the session's own.
 - **Sessions already open**: `render.lua` also reads Claude Code's internal registry (`~/.claude/sessions/<pid>.json`) to show, idle, live sessions that have no hook file yet (opened before the install, or with no activity). The process must exist and its start time must match. Undocumented format: at worst these sessions don't show up, and the hooks stay the main source.
 - `awesome/claude_constellation/` is the Lua module: `render.lua` reads the sessions and draws them (cairo, no Awesome dependency) through one of the `layouts/`, `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
-- **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
+- **GPU or CPU**: by default (`auto`) it renders on the GPU whenever one is found (a graphics driver other than a firmware framebuffer or virtual display bound to `/sys/class/drm/cardN`): it draws straight onto the X surface, which the X server renders with the driver, and keeps the cached glows and Clawd frames as X pixmaps in video memory. Without a GPU it draws into an in-memory image (pixman) and copies the frame in one paint. The check runs every second, so it follows a GPU that appears or goes away; a GPU frame that fails switches to the CPU for the rest of the session. To force one (remembered, and used by the lock screen too):
+
+  ```sh
+  awesome-client 'return require("ui.desktop.claude_constellation").set_backend("cpu")'   # or "gpu", "auto"
+  ```
+- **Covered by a window**: while one window covers the whole wallpaper (maximised, fullscreen, or alone in a tiled layout), nothing is redrawn; the animation resumes when it moves away. Windows Awesome draws translucent don't count, but a compositor's own transparency rules (picom `opacity-rule`) can't be seen: behind such a window the wallpaper simply stays still.
+- **Eco mode**: nothing moves, not even the Clawd emotes, and one frame a second follows the sessions. Measured on a 3-screen desktop with a working session, the wallpaper went from about 10% of a CPU core to about 3%. `auto` (the default) turns it on while on battery (system battery `Discharging`), `on` always, `off` never; the choice is remembered and applies to the lock screen too:
+
+  ```sh
+  constellation-eco          # show the mode: "auto (off)"
+  constellation-eco toggle   # or on, off, auto
+  ```
+
+  With eco `off`, a battery still freezes everything but the Clawd emotes, at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
 
@@ -116,7 +129,7 @@ make test-docker      # luacheck + Lua specs in the CI's Arch container (no loca
 - The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
 - `e2e/` (`make test-e2e`, or `make test-e2e-docker` for Lua 5.4, 5.1 and LuaJIT): installs into a throwaway `$HOME`, feeds the hook commands written into `settings.json` Claude Code-shaped events (two sessions sharing a file, one fanning out to 17 subagents of 8 types, ten of them started in parallel), checks the session files, then loads the installed module and draws every layout, public and private, from those files with each Lua the saver may use. It ends with a few frames of both demo scenarios.
-- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, the Lua specs, and the e2e test under Lua 5.4, 5.1 and LuaJIT in an Arch container.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 22/24/26, luacheck, the Lua specs, and the e2e test under Lua 5.4, 5.1 and LuaJIT in an Arch container.
 
 ## Releasing
 

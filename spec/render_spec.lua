@@ -1,5 +1,5 @@
 -- Specs for render.lua: session loading, power detection, palette, and what draw() puts on
--- screen (labels, private mode, shared-resource links, battery freeze), asserted through a
+-- screen (labels, private mode, shared-resource links, battery freeze, eco mode), asserted through a
 -- recording cairo context, plus a real cairo smoke test and sprite asset checks.
 local H = require("spec.helpers")
 local lgi = require("lgi")
@@ -203,6 +203,51 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("render backend", function()
+    local drm
+    before_each(function()
+      drm = H.tmpdir()
+      R.set_dirs(nil, nil, nil, nil, drm)
+    end)
+    after_each(function() H.rmrf(drm) end)
+
+    local function card(name, driver)
+      H.write(drm .. name .. "/device/uevent", "DRIVER=" .. driver .. "\nPCI_CLASS=30000\n")
+    end
+
+    it("finds a GPU bound to a DRM card", function()
+      card("card1", "nvidia")
+      assert.is_true(R.has_gpu())
+      assert.are.equal("gpu", R.resolve_backend("auto"))
+    end)
+
+    it("ignores framebuffer and virtual display drivers, and connectors", function()
+      card("card0", "simpledrm")
+      card("card1", "vkms")
+      card("card0-HDMI-A-1", "amdgpu")
+      assert.is_false(R.has_gpu())
+      assert.are.equal("cpu", R.resolve_backend("auto"))
+    end)
+
+    it("prefers the GPU when the machine has both kinds", function()
+      card("card0", "simpledrm")
+      card("card1", "i915")
+      assert.are.equal("gpu", R.resolve_backend("auto"))
+    end)
+
+    it("falls back to the CPU without any DRM device", function()
+      R.set_dirs(nil, nil, nil, nil, drm .. "missing/")
+      assert.are.equal("cpu", R.resolve_backend("auto"))
+      assert.are.equal("cpu", R.resolve_backend(nil))
+    end)
+
+    it("honours a forced choice whatever the hardware", function()
+      assert.are.equal("gpu", R.resolve_backend("gpu"))
+      card("card1", "nvidia")
+      assert.are.equal("cpu", R.resolve_backend("cpu"))
+    end)
+  end)
+
   describe("palette", function()
     local function bg_of(rec) return rec.colors[1] end
 
@@ -354,6 +399,42 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("eco mode (still)", function()
+    -- The surfaces painted in a frame: glows and the Clawd emote frames, in order.
+    local function painted(opts)
+      local cr = H.recorder()
+      local seen = {}
+      function cr.set_source_surface(_, surf) seen[#seen + 1] = tostring(surf) end
+      R.draw(cr, 1920, 1080, opts)
+      assert.is_true(#seen > 0)
+      return table.concat(seen, ";")
+    end
+
+    before_each(function()
+      H.session(data, "a", { state = "thinking" })
+      R.read_sessions()
+    end)
+
+    it("freezes the Clawd emotes too", function()
+      local first = painted({ still = true })
+      GLib.usleep(300000)
+      assert.are.equal(first, painted({ still = true }))
+    end)
+
+    it("static alone still animates them", function()
+      local first = painted({ static = true })
+      GLib.usleep(300000)
+      assert.are_not.equal(first, painted({ static = true }))
+    end)
+
+    it("is on when asked, or in auto on battery", function()
+      assert.is_true(R.eco_active("on", false))
+      assert.is_true(R.eco_active("auto", true))
+      assert.is_false(R.eco_active("auto", false))
+      assert.is_false(R.eco_active("off", true))
+    end)
+  end)
+
   describe("layouts", function()
     local function link(kind, label) return { kind = kind, label = label, ts = os.time() } end
     local now = os.time()
@@ -451,6 +532,22 @@ describe("render.lua", function()
       assert.are.equal("constellation", R.read_layout())
     end)
 
+    it("backend defaults to auto, is remembered, and an unknown value falls back to auto", function()
+      assert.are.equal("auto", R.read_backend())
+      assert.is_true(R.write_backend("cpu"))
+      assert.are.equal("cpu", R.read_backend())
+      H.write(cache .. "backend", "tpu\n")
+      assert.are.equal("auto", R.read_backend())
+    end)
+
+    it("eco mode defaults to auto, is remembered, and an unknown value falls back to auto", function()
+      assert.are.equal("auto", R.read_eco())
+      assert.is_true(R.write_eco("on"))
+      assert.are.equal("on", R.read_eco())
+      H.write(cache .. "eco", "max\n")
+      assert.are.equal("auto", R.read_eco())
+    end)
+
     it("is remembered, and an unknown value falls back to the default", function()
       assert.is_true(R.write_layout("cards"))
       assert.are.equal("cards", R.read_layout())
@@ -472,6 +569,25 @@ describe("render.lua", function()
         R.draw(cr, 640, 360, { layout = layout })
         R.draw(cr, 640, 360, { layout = layout, static = true, private = true })
         assert.are.equal("SUCCESS", cr.status, layout)
+      end
+    end)
+
+    it("renders every layout on either backend, onto image and non-image targets", function()
+      H.session(data, "s1", { state = "tool", kind = "shell", target = "ls",
+        history = { { kind = "file", target = "a.txt", ts = os.time() } } })
+      H.session(data, "s2", { state = "permission" })
+      R.read_sessions()
+      for _, backend in ipairs({ "gpu", "cpu" }) do
+        local surf = cairo.ImageSurface.create(cairo.Format.RGB24, 320, 200)
+        local rec = cairo.RecordingSurface.create(cairo.Content.COLOR_ALPHA,
+          cairo.Rectangle { x = 0, y = 0, width = 320, height = 200 })
+        for _, target in ipairs({ surf, rec }) do
+          local cr = cairo.Context(target)
+          for _, layout in ipairs(R.LAYOUTS) do
+            R.draw(cr, 320, 200, { layout = layout, backend = backend })
+            assert.are.equal("SUCCESS", cr.status, backend .. " " .. layout)
+          end
+        end
       end
     end)
 

@@ -46,20 +46,24 @@ local CLAWD = {
   rest = "crab",
 }
 
-local R = { FPS_ACTIVE = 30, FPS_IDLE = 8 }
+local R = { FPS_ACTIVE = 30, FPS_IDLE = 8, FPS_ECO = 1 }
 
 -- Where session files, Claude Code's session registry (internal, best-effort), processes,
--- power supplies and the cache (theme, chosen layout) live; overridable for tests.
+-- power supplies, graphics devices and the cache (theme, chosen layout, backend and eco mode)
+-- live;
+-- overridable for tests.
 local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
 local PS_DIR = "/sys/class/power_supply/"
 local REGISTRY_DIR = os.getenv("HOME") .. "/.claude/sessions/"
 local PROC_DIR = "/proc/"
+local DRM_DIR = "/sys/class/drm/"
 R.CACHE_DIR = (os.getenv("XDG_CACHE_HOME") or (os.getenv("HOME") .. "/.cache")) .. "/claude-constellation/"
-function R.set_dirs(data_dir, power_dir, registry_dir, proc_dir)
+function R.set_dirs(data_dir, power_dir, registry_dir, proc_dir, drm_dir)
   DATA_DIR = data_dir or DATA_DIR
   PS_DIR = power_dir or PS_DIR
   REGISTRY_DIR = registry_dir or REGISTRY_DIR
   PROC_DIR = proc_dir or PROC_DIR
+  DRM_DIR = drm_dir or DRM_DIR
 end
 function R.set_cache_dir(dir) R.CACHE_DIR = dir end
 
@@ -119,18 +123,34 @@ local function set(cr, c, a) cr:set_source_rgba(c[1], c[2], c[3], a or 1) end
 local manifest = R.read_json(FRAMES_DIR .. "sprites.json")
 if type(manifest) ~= "table" then manifest = {} end
 
--- Strips are decoded lazily and memoised; {} when a set is missing (falls back to a dot).
-local sprite_cache = {}
-local function sprite_set(name)
-  local cells = sprite_cache[name]
+-- Backend of the frame being drawn ("gpu" or "cpu", see R.draw) and the offscreen surfaces
+-- it caches: on the GPU they are made similar to the target (on X, pixmaps in video memory,
+-- so blitting them stays on the GPU); on the CPU, or if the target can't make them, images.
+local backend = "cpu"
+local function offscreen(cr, w, h)
+  if backend == "gpu" then
+    local ok, surf = pcall(function()
+      return cr:get_target():create_similar(cairo.Content.COLOR_ALPHA, w, h)
+    end)
+    if ok and surf and surf.status == "SUCCESS" then return surf end
+  end
+  return cairo.ImageSurface.create(cairo.Format.ARGB32, w, h)
+end
+
+-- Strips are decoded lazily and memoised per backend: a list of cells plus their size (cells.w,
+-- cells.h; non-image surfaces can't tell); {} when a set is missing (falls back to a dot).
+local sprite_cache = { cpu = {}, gpu = {} }
+local function sprite_set(name, cr)
+  local cells = sprite_cache[backend][name]
   if cells then return cells end
   cells = {}
   local n = math.floor(tonumber(manifest[name]) or 0)
   local ok, sheet = pcall(cairo.ImageSurface.create_from_png, FRAMES_DIR .. name .. ".png")
   if n > 0 and ok and sheet and sheet.status == "SUCCESS" then
     local w, h = math.floor(sheet:get_width() / n), sheet:get_height()
+    cells.w, cells.h = w, h
     for i = 0, n - 1 do
-      local cell = cairo.ImageSurface.create(cairo.Format.ARGB32, w, h)
+      local cell = offscreen(cr, w, h)
       local c = cairo.Context(cell)
       c:set_source_surface(sheet, -i * w, 0)
       c:paint()
@@ -138,7 +158,7 @@ local function sprite_set(name)
     end
     sheet:finish()
   end
-  sprite_cache[name] = cells
+  sprite_cache[backend][name] = cells
   return cells
 end
 
@@ -439,6 +459,45 @@ function R.on_battery()
   return discharging
 end
 
+-- Render backend: "gpu" draws straight onto the target (on X, a surface the X server renders
+-- with the graphics driver) with cached glows and sprites kept next to it; "cpu" draws into an
+-- in-memory image (pixman) and copies it to the target in one paint. "auto" prefers the GPU.
+R.BACKENDS = { "auto", "gpu", "cpu" }
+
+-- DRM drivers with no 2D acceleration behind them: firmware framebuffers, virtual GPUs without
+-- 3D, server BMC display chips. Anything else bound to a /sys/class/drm/cardN counts as a GPU.
+local SOFT_DRM = {
+  simpledrm = true, ["simple-framebuffer"] = true, efifb = true, vesafb = true, ofdrm = true,
+  vkms = true, ["bochs-drm"] = true, bochs = true, ["cirrus-qemu"] = true, cirrus = true,
+  qxl = true, vboxvideo = true, hyperv_drm = true, udl = true, ast = true, mgag200 = true,
+}
+
+function R.has_gpu()
+  local found = false
+  pcall(function()
+    local en = Gio.File.new_for_path(DRM_DIR)
+      :enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
+    if not en then return end
+    while true do
+      local info = en:next_file(); if not info then break end
+      local name = info:get_name()
+      if name:match("^card%d+$") then
+        local f = io.open(DRM_DIR .. name .. "/device/uevent", "r")
+        local driver = f and (f:read("*a") or ""):match("DRIVER=([^\n]+)")
+        if f then f:close() end
+        if driver and not SOFT_DRM[driver] then found = true end
+      end
+    end
+  end)
+  return found
+end
+
+-- "auto" (or anything unknown) -> "gpu" when a GPU is found, else "cpu".
+function R.resolve_backend(choice)
+  if choice == "gpu" or choice == "cpu" then return choice end
+  return R.has_gpu() and "gpu" or "cpu"
+end
+
 -- Drawing kit shared by the layouts (layouts/*.lua) --------------------------------------------
 K = {
   C = C, FADE_LINK = FADE_LINK, LINK_WINDOW = LINK_WINDOW, PARTICLE_TIME = PARTICLE_TIME,
@@ -466,7 +525,7 @@ end
 -- tilt rotates the sprite around its centre (rad, clockwise).
 local function draw_sprite(cr, cells, idx, x, y, a, size, tilt)
   local cell = cells[(idx % #cells) + 1]
-  local w, h = cell:get_width(), cell:get_height()
+  local w, h = cells.w, cells.h
   local k = size / math.max(w, h)
   cr:save()
   cr:translate(x, y)
@@ -482,14 +541,15 @@ end
 -- Rasterising a radial gradient was the costliest part of a frame, so each glow is drawn once
 -- per (colour, whole-pixel radius) into a small surface, then blitted with the wanted alpha.
 -- Keyed by the palette's colour tables: set_palette drops the old ones, and their surfaces.
-local glow_cache = setmetatable({}, { __mode = "k" })
+-- One cache per backend, like the sprites.
+local glow_cache = { cpu = setmetatable({}, { __mode = "k" }), gpu = setmetatable({}, { __mode = "k" }) }
 function K.glow(cr, x, y, r, c, a)
   r = math.floor(r + 0.5)
-  local by_r = glow_cache[c]
-  if not by_r then by_r = {}; glow_cache[c] = by_r end
+  local by_r = glow_cache[backend][c]
+  if not by_r then by_r = {}; glow_cache[backend][c] = by_r end
   local surf = by_r[r]
   if not surf then
-    surf = cairo.ImageSurface.create(cairo.Format.ARGB32, 2 * r, 2 * r)
+    surf = offscreen(cr, 2 * r, 2 * r)
     local g = cairo.Context(surf)
     local pat = cairo.Pattern.create_radial(r, r, 0, r, r, r)
     pat:add_color_stop_rgba(0, c[1], c[2], c[3], 1)
@@ -609,10 +669,11 @@ function K.node(cr, s, i, x, y, f, size)
   local k = size / SPRITE_SIZE
   K.glow(cr, x, y, (40 + 18 * pulse) * k, col, (0.35 + 0.4 * pulse) * A)
   local name, loops = emote(s, t)
-  local frames = sprite_set(name)
+  local frames = sprite_set(name, cr)
   if #frames > 0 then
-    -- Desynced per session.
-    draw_sprite(cr, frames, loops and math.floor(t * SPRITE_FPS + i * 7) or 0, x, y, A, size)
+    -- Desynced per session; the first frame when still (eco mode).
+    local idx = loops and not f.still and math.floor(t * SPRITE_FPS + i * 7) or 0
+    draw_sprite(cr, frames, idx, x, y, A, size)
   else
     set(cr, col, A); cr:arc(x, y, 5 * k, 0, 2 * math.pi); cr:fill()
   end
@@ -736,24 +797,79 @@ function R.write_layout(name)
   return true
 end
 
+-- The chosen backend ("auto", "gpu" or "cpu"), shared with the lock-screen saver.
+function R.read_backend()
+  local name = read_line(R.CACHE_DIR .. "backend")
+  for _, b in ipairs(R.BACKENDS) do if b == name then return name end end
+  return "auto"
+end
+function R.write_backend(name)
+  local f = io.open(R.CACHE_DIR .. "backend", "w")
+  if not f then return false end
+  f:write(name, "\n"); f:close()
+  return true
+end
+
+-- Eco mode: "on" always, "auto" on battery, "off" never. While it is on nothing moves, not even
+-- the Clawd emotes, and a frame a second is enough to follow the sessions. Shared with the
+-- lock-screen saver.
+R.ECO_MODES = { "auto", "on", "off" }
+function R.read_eco()
+  local name = read_line(R.CACHE_DIR .. "eco")
+  for _, m in ipairs(R.ECO_MODES) do if m == name then return name end end
+  return "auto"
+end
+function R.write_eco(name)
+  local f = io.open(R.CACHE_DIR .. "eco", "w")
+  if not f then return false end
+  f:write(name, "\n"); f:close()
+  return true
+end
+function R.eco_active(choice, battery)
+  return choice == "on" or (choice == "auto" and battery == true)
+end
+
 -- Draw one frame. opts.layout picks the presentation (constellation by default);
--- opts.static freezes everything but the Clawd emotes (battery mode); opts.private drops what
--- could leak on a lock screen: paths, commands and the tool target.
+-- opts.static freezes everything but the Clawd emotes (battery mode), opts.still the emotes
+-- too (eco mode); opts.private drops what
+-- could leak on a lock screen: paths, commands and the tool target. opts.backend is "gpu" or
+-- "cpu" (the default; see R.resolve_backend): on the CPU, a target that isn't an image (an X
+-- surface) gets the frame from an in-memory buffer, in one paint.
+local cpu_buf, cpu_cr
 function R.draw(cr, w, h, opts)
   opts = opts or {}
+  backend = opts.backend == "gpu" and "gpu" or "cpu"
+  local out = cr
+  if backend == "cpu" then
+    local ok, target = pcall(function() return cr:get_target() end)
+    if ok and target and target.type ~= cairo.SurfaceType.IMAGE then
+      local bw, bh = math.ceil(w), math.ceil(h)
+      if not cpu_buf or cpu_buf:get_width() ~= bw or cpu_buf:get_height() ~= bh then
+        cpu_buf = cairo.ImageSurface.create(cairo.Format.RGB24, bw, bh) -- the background is opaque
+        cpu_cr = cairo.Context(cpu_buf)
+      end
+      cr = cpu_cr
+    end
+  end
   local t = now()
-  local f = { t = t, ta = opts.static and 0 or t, static = opts.static, private = opts.private,
+  local static = opts.static or opts.still
+  local f = { t = t, ta = static and 0 or t, static = static, still = opts.still, private = opts.private,
     list = {}, links = links, gen = generation }
   for i, sid in ipairs(order) do
     local s = sessions[sid]
     s.stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)
-    s.alpha = s.alpha + (((s.stale and 0.35) or 1) - s.alpha) * (opts.static and 1 or 0.08)
+    s.alpha = s.alpha + (((s.stale and 0.35) or 1) - s.alpha) * (static and 1 or 0.08)
     f.list[i] = s
   end
   set(cr, C.bg); cr:paint()
   bold = nil; K.bold(cr, false) -- a fresh context starts with the default font
   local layout = layouts[opts.layout] or layouts.constellation
   layout(K, cr, w, h, f)
+  if cr ~= out then
+    cpu_buf:flush()
+    out:set_source_surface(cpu_buf, 0, 0)
+    out:paint()
+  end
 end
 
 return R
