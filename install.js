@@ -23,12 +23,13 @@ const EVENTS = {
   UserPromptSubmit: "prompt",
   PreToolUse: "pre",
   PostToolUse: "post",
+  PostToolUseFailure: "post", // a failed call ends there, not in PostToolUse
   Notification: "notify",
   PermissionRequest: "permreq",
   Stop: "stop",
   SessionEnd: "end",
 };
-const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest"]);
+const MATCHER = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]);
 // Hook commands run through a shell: quote paths so a checkout path with spaces still works.
 const sh = (s) => `'${s.replace(/'/g, "'\\''")}'`;
 

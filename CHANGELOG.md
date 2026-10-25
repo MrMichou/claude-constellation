@@ -6,6 +6,12 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+### Fixed
+- **Sessions with subagents** (which share the parent's session id):
+  - the node keeps its project name instead of taking the subagent's worktree (`agent-<id>`);
+  - parallel tool calls are tracked by `tool_use_id`, so each call ends with its own result and the node stays on a call that is still running (named even once it has left the 10-call history) instead of going back to *thinking*.
+- **Failed tool calls** end on `PostToolUseFailure` (rerun `node install.js` to add the hook) instead of staying open until the end of the turn.
+
 ### Security
 - **vitest 2.1 → 5.0** (dev only): clears the `npm audit` advisories in vitest, vite, esbuild and tinypool. JS tests now run on Node 22/24/26 (vitest 5 needs Node ≥ 22.12); the hook itself is unchanged.
 - **Private session files**: `~/.claude/constellation/` is created `0700` and session files are written `0600`, since they hold the start of shell commands.

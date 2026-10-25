@@ -5,7 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { tmpHome, runNode, readJson, exists, INSTALL, TRACK, ROOT } from "./helpers.js";
 
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+  "Notification",
   "PermissionRequest", "Stop", "SessionEnd"];
 
 describe("install.js", () => {
