@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+// Sign the claude-constellation HUD in to a Promview server that requires OIDC.
+// Usage: constellation-promview-login [--no-browser] [url]
+//
+// Same flow as the Promview desktop client: the browser signs in at
+// <url>/api/v1/auth/oidc/login?desktop_redirect=http://127.0.0.1:<port>/callback, the server
+// redirects back here with a one-minute code, and /api/v1/auth/desktop/exchange trades it for
+// an ordinary Promview session token (12 h). The token goes to the secret store (secret-tool,
+// service=claude-constellation-promview server=<url>), where the HUD's poll reads it; it is
+// never written to a file or put on a command line. The url defaults to PROMVIEW_URL, then
+// the one in ~/.config/claude-constellation/promview.conf. HTTP goes through curl, like the
+// HUD's poll: it trusts the system CA store (internal CAs), which Node's own fetch does not.
+
+const fs = require("fs");
+const http = require("http");
+const os = require("os");
+const path = require("path");
+const { spawn } = require("child_process");
+
+const SERVICE = "claude-constellation-promview";
+const TIMEOUT = 5 * 60 * 1000;
+// Overridable for tests.
+const SECRET_TOOL = process.env.CONSTELLATION_SECRET_TOOL || "secret-tool";
+
+function die(msg) {
+  console.error(`constellation-promview-login: ${msg}`);
+  process.exit(1);
+}
+
+function configUrl() {
+  const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  let text = "";
+  try { text = fs.readFileSync(path.join(dir, "claude-constellation", "promview.conf"), "utf8"); } catch {}
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*url\s*=\s*(.*?)\s*$/);
+    if (m) return m[1].replace(/^"(.*)"$/, "$1");
+  }
+  return "";
+}
+
+function run(cmd, args, input) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (err) => resolve({ code: -1, stdout, stderr: String(err.message) }));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(input || "");
+  });
+}
+
+// Secrets (the code, the token) go to curl on stdin, never on its command line.
+const CURL = ["-sS", "-f", "--max-time", "20", "-H", "Accept: application/json"];
+function json(r) { try { return JSON.parse(r.stdout); } catch { return null; } }
+
+// Resolves with the code the browser brings back to http://127.0.0.1:<port>/callback.
+function callback() {
+  const server = http.createServer();
+  const code = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for the browser")), TIMEOUT);
+    server.on("request", (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      const found = url.pathname === "/callback" && url.searchParams.get("code");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", Connection: "close" });
+      res.end('<!doctype html><meta charset="utf-8"><title>Promview</title>'
+        + '<body style="font-family:system-ui;padding:2rem">'
+        + (found ? "Signed in. You can close this tab.<script>window.close()</script>"
+          : "Waiting for a sign-in result…"));
+      if (found) { clearTimeout(timer); resolve(found); }
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve({ server, code, port: server.address().port }));
+  });
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes("-h") || args.includes("--help")) {
+    console.log("Usage: constellation-promview-login [--no-browser] [url]");
+    return;
+  }
+  const browser = !args.includes("--no-browser");
+  const raw = args.find((a) => !a.startsWith("-")) || process.env.PROMVIEW_URL || configUrl();
+  if (!raw) die("no Promview url: pass one, or set url in ~/.config/claude-constellation/promview.conf");
+  const base = raw.replace(/\/+$/, "");
+
+  const cb = await callback();
+  const login = new URL(base + "/api/v1/auth/oidc/login");
+  login.searchParams.set("desktop_redirect", `http://127.0.0.1:${cb.port}/callback`);
+  console.log(`Sign in to Promview in your browser:\n  ${login}`);
+  if (browser) spawn("xdg-open", [String(login)], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+
+  let code;
+  try { code = await cb.code; } catch (err) { die(err.message); } finally {
+    // Node < 19 leaves keep-alive sockets open on close(), holding the process up for 5 s.
+    cb.server.close();
+    if (cb.server.closeAllConnections) cb.server.closeAllConnections();
+  }
+
+  const ex = await run("curl", [...CURL, "-H", "Content-Type: application/json", "--data-binary", "@-",
+    base + "/api/v1/auth/desktop/exchange"], JSON.stringify({ code }));
+  if (ex.code !== 0) die(`exchange failed: ${ex.stderr.trim() || `curl exited ${ex.code}`}`);
+  const token = (json(ex) || {}).token;
+  if (!token) die("the server returned no session token");
+
+  const stored = await run(SECRET_TOOL, ["store", "--label=Promview session (claude-constellation)",
+    "service", SERVICE, "server", base], token);
+  if (stored.code !== 0) die(`could not store the token with ${SECRET_TOOL}: ${stored.stderr.trim()}`);
+
+  const me = json(await run("curl", [...CURL, "-H", "@-", base + "/api/v1/me"],
+    `Authorization: Bearer ${token}\n`));
+  const who = me && (me.displayName || me.username || me.email || (me.principal && me.principal.username));
+  console.log(`Signed in${who ? ` as ${who}` : ""}. The session lasts about 12 hours.`);
+
+  // Have the running Awesome poll again now rather than at its next interval.
+  await run("awesome-client", [
+    "local ok, cc = pcall(require, 'ui.desktop.claude_constellation')\n"
+    + "if ok and cc.promview_refresh then cc.promview_refresh() end",
+  ]);
+}
+
+main().catch((err) => die(err.message));

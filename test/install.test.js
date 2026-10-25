@@ -89,6 +89,14 @@ describe("install.js", () => {
       expect(exists(cmdLink(name))).toBe(false);
     });
 
+  it("links constellation-promview-login too, and removes it", async () => {
+    const login = path.join(h.home, ".local", "bin", "constellation-promview-login");
+    await install();
+    expect(fs.readlinkSync(login)).toBe(path.join(ROOT, "bin", "constellation-promview-login"));
+    await install("--uninstall");
+    expect(exists(login)).toBe(false);
+  });
+
   it("leaves an unrelated constellation-layout command alone", async () => {
     fs.mkdirSync(path.dirname(cmdLink()), { recursive: true });
     fs.writeFileSync(cmdLink(), "#!/bin/sh\n");

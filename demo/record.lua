@@ -2,8 +2,10 @@
 -- Renders the README demos offline with the real renderer (render.lua) on a scripted set of
 -- fake sessions and a simulated clock, so the output is reproducible and leaks nothing.
 -- Usage: demo/record.sh (wraps this script and encodes the GIFs with ffmpeg).
---   lua5.4 demo/record.lua <out_dir> <wallpaper|lock|layouts> <width> <height> <fps> <seconds> [scenario]
+--   lua5.4 demo/record.lua <out_dir> <wallpaper|lock|layouts|promview> <width> <height> <fps> <seconds>
+--     [scenario]
 -- "layouts" cycles through every layout (R.LAYOUTS), an equal share of the time each.
+-- "promview" is the hud layout with a board of made-up Promview alerts, under a 36px bar.
 -- Scenarios: "sessions" (default, four everyday sessions) and "workflow" (a big multi-agent
 -- workflow fanning out to ~30 subagents, to show runners being grouped and ungrouped).
 
@@ -145,6 +147,43 @@ if MODE == "layouts" then
 end
 for _, s in pairs(S) do save(s) end
 
+-- Made-up Promview snapshot (alert name, severity, instances, minutes since the newest started,
+-- summary when there is no instance), parsed by the real promview.lua.
+if MODE == "promview" then
+  local P = dofile(DIR .. "../awesome/claude_constellation/promview.lua")
+  local ALERTS = {
+    { "PostgresPrimaryDown", "critical", { "pg-main-01:9187" }, 3 },
+    { "KubeNodeNotReady", "critical", { "node-07", "node-12" }, 26 },
+    { "DiskWillFillIn4Hours", "warning", { "logs-01:9100", "logs-02:9100", "logs-03:9100",
+      "metrics-01:9100" }, 7 },
+    { "HostHighCpuLoad", "warning", { "ci-runner-03:9100", "ci-runner-04:9100", "ci-runner-07:9100",
+      "ci-runner-09:9100", "ci-runner-11:9100", "ci-runner-12:9100", "ci-runner-15:9100" }, 48 },
+    { "KubeDeploymentReplicasMismatch", "warning", { "checkout/api", "search/indexer" }, 95 },
+    { "RabbitmqQueueBacklog", "warning", { "mq-01:15692", "mq-02:15692", "mq-03:15692" }, 180 },
+    { "CertificateExpiresSoon", "warning", { "auth.example.com", "status.example.com" }, 60 * 30 },
+    { "PuppetLastRunTooOld", "warning", { "web-01", "web-02", "web-03", "web-04", "web-05", "web-06",
+      "web-07", "web-08", "web-09" }, 60 * 50 },
+    { "RedisMemoryHigh", "warning", { "cache-02:9121" }, 300 },
+    { "BlackboxProbeSlow", "warning", { "https://shop.example.com" }, 14 },
+    { "NodeClockSkew", "info", { "build-02:9100", "build-05:9100" }, 600 },
+    { "PrometheusRuleEvaluationSlow", "warning", { "prometheus-0:9090" }, 60 * 24 * 12, true },
+    { "Watchdog", "info", {}, 60 * 24 * 40, false, "Alerting pipeline is alive" },
+  }
+  local list = {}
+  for _, a in ipairs(ALERTS) do
+    local where = #a[3] > 0 and a[3] or { false }
+    for i, inst in ipairs(where) do
+      list[#list + 1] = { id = tostring(#list + 1), status = "firing", severity = a[2], source = "demo",
+        startsAt = os.date("!%Y-%m-%dT%H:%M:%SZ", math.floor(T0 - a[4] * 60 - (i - 1) * 600)),
+        labels = { alertname = a[1], instance = inst or nil }, annotations = { summary = a[6] },
+        suppressed = a[5] or false }
+    end
+  end
+  local state = P.parse(encode({ total = #list, alerts = list }))
+  state.ok, state.fetched = true, T0 - 8
+  R.set_alerts(state)
+end
+
 -- Timeline: { at, sid, event, tool, kind, target }
 timeline = {
   { 0.6, "a", "pre", "Read", "file", "…/claude_constellation/render.lua" },
@@ -250,6 +289,7 @@ end
 
 local surface = cairo.ImageSurface.create(cairo.Format.RGB24, W, H)
 local opts = { private = MODE == "lock" }
+if MODE == "promview" then opts.layout, opts.area = "hud", { x = 0, y = 36, w = W, h = H - 36 } end
 local layout_time = SECONDS / #R.LAYOUTS
 local PREROLL = 2 -- seconds rendered but not saved, so nodes have faded in and settled
 local frames, next_ev = math.floor(SECONDS * FPS), 1
