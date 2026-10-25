@@ -7,27 +7,27 @@ All notable changes to claude-constellation are documented here. This project fo
 ## [Unreleased]
 
 ### Added
-- **Eco mode** (`constellation-eco [toggle|on|off|auto]`, or `set_eco()`): nothing moves, not even the Clawd emotes, and one frame a second follows the sessions; about 3% of a CPU core instead of 10% with a working session. `auto`, the default, turns it on while on battery (instead of the 8 fps freeze), and the lock screen follows the same choice. `install.js` links the new command.
-- **No redraws while a window covers the whole wallpaper** (maximised, fullscreen, or alone in a tiled layout); the animation resumes when it moves away.
-- **Subagents as mini Clawds.** Each subagent circles its session, labelled with its Agent call's description: running during a tool call, walking while thinking, listening on a permission, partying then fading once done. Past 6 running subagents they are grouped by type ("general-purpose ×10"), and past 6 groups the smallest merge into "+k agents". The hook now listens to `SubagentStart`/`SubagentStop` (re-run `node install.js`) and routes tool events carrying `agent_id` to the subagent instead of the session.
-- **End-to-end test** (`e2e/run.sh`, `make test-e2e`), also run in CI: installer, then the installed hook commands fed a subagent fan-out, then every layout drawn from the resulting files under Lua 5.4, 5.1 and LuaJIT.
-- **`workflow` demo scenario** (`demo/record.sh subagents`): a big multi-agent fan-out, rendered to `docs/subagents.gif`.
-- **Promview alerts in the HUD.** With a url in `~/.config/claude-constellation/promview.conf` (or `PROMVIEW_URL`), the hud layout polls a [Promview](https://github.com/cropalato/promview) server with `curl` in the background and turns the desktop left of the sessions into a board behind the windows: the count per severity in large type, and one card per alert name (count, newest age, instances), most severe first; the last alerts stay, dimmed, while the server can't be reached. The lock screen shows the same board, through a cache file the desktop layer keeps up to date. For a server that requires OIDC, `constellation-promview-login` signs in through the browser like the Promview desktop client and keeps the session token in the keyring (`secret-tool`); the HUD says "sign in needed" when it expires.
-- **Promview alerts from promview-desktop.** When the Promview desktop client runs, the HUD asks it for the alerts over the session bus (`org.promview.Desktop`) and refreshes on its `AlertsChanged` signal instead of polling with `curl`; the poll becomes a two-minute fallback. It goes back to `curl` when the desktop quits and picks it up again when it starts. `desktop = auto|on|off` in `promview.conf`; `on` needs no `url`.
+- **Eco mode** (`constellation-eco [toggle|on|off|auto]`, or `set_eco()`): nothing moves, not even the Clawd emotes, and one frame a second follows the sessions; about 3% of a CPU core instead of 10% with a working session. `auto`, the default, turns it on while on battery (instead of the 8 fps freeze), and the lock screen follows the same choice. `install.js` links the new command (#14).
+- **No redraws while a window covers the whole wallpaper** (maximised, fullscreen, or alone in a tiled layout); the animation resumes when it moves away (#14).
+- **Subagents as mini Clawds.** Each subagent circles its session, labelled with its Agent call's description: running during a tool call, walking while thinking, listening on a permission, partying then fading once done. Past 6 running subagents they are grouped by type ("general-purpose ×10"), and past 6 groups the smallest merge into "+k agents". The hook now listens to `SubagentStart`/`SubagentStop` (re-run `node install.js`) and routes tool events carrying `agent_id` to the subagent instead of the session (#5).
+- **End-to-end test** (`e2e/run.sh`, `make test-e2e`), also run in CI: installer, then the installed hook commands fed a subagent fan-out, then every layout drawn from the resulting files under Lua 5.4, 5.1 and LuaJIT (#5).
+- **`workflow` demo scenario** (`demo/record.sh subagents`): a big multi-agent fan-out, rendered to `docs/subagents.gif` (#5).
+- **Promview alerts in the HUD.** With a url in `~/.config/claude-constellation/promview.conf` (or `PROMVIEW_URL`), the hud layout polls a [Promview](https://github.com/cropalato/promview) server with `curl` in the background and turns the desktop left of the sessions into a board behind the windows: the count per severity in large type, and one card per alert name (count, newest age, instances), most severe first; the last alerts stay, dimmed, while the server can't be reached. The lock screen shows the same board, through a cache file the desktop layer keeps up to date. For a server that requires OIDC, `constellation-promview-login` signs in through the browser like the Promview desktop client and keeps the session token in the keyring (`secret-tool`); the HUD says "sign in needed" when it expires (#9).
+- **Promview alerts from promview-desktop.** When the Promview desktop client runs, the HUD asks it for the alerts over the session bus (`org.promview.Desktop`) and refreshes on its `AlertsChanged` signal instead of polling with `curl`; the poll becomes a two-minute fallback. It goes back to `curl` when the desktop quits and picks it up again when it starts. `desktop = auto|on|off` in `promview.conf`; `on` needs no `url` (#10, thanks @cropalato).
 
 ### Fixed
 - **Sessions with subagents** (which share the parent's session id):
-  - the node keeps its project name instead of taking the subagent's worktree (`agent-<id>`);
-  - parallel tool calls are tracked by `tool_use_id`, so each call ends with its own result and the node stays on a call that is still running (named even once it has left the 10-call history) instead of going back to *thinking*.
-- **Parallel hooks no longer lose updates**: the hook holds `<session>.json.lock` while it rewrites the session file, so subagents fanning out (or parallel tool calls) don't overwrite each other's calls and descriptions.
-- **Re-installing from another checkout** replaces the `track.js` hooks of any `claude-constellation*` clone or worktree instead of leaving the older one running too.
-- **Failed tool calls** end on `PostToolUseFailure` (rerun `node install.js` to add the hook) instead of staying open until the end of the turn.
+  - the node keeps its project name instead of taking the subagent's worktree (`agent-<id>`) (#13);
+  - parallel tool calls are tracked by `tool_use_id`, so each call ends with its own result and the node stays on a call that is still running (named even once it has left the 10-call history) instead of going back to *thinking* (#13).
+- **Parallel hooks no longer lose updates**: the hook holds `<session>.json.lock` while it rewrites the session file, so subagents fanning out (or parallel tool calls) don't overwrite each other's calls and descriptions (#5).
+- **Re-installing from another checkout** replaces the `track.js` hooks of any `claude-constellation*` clone or worktree instead of leaving the older one running too (#5).
+- **Failed tool calls** end on `PostToolUseFailure` (rerun `node install.js` to add the hook) instead of staying open until the end of the turn (#13).
 
 ### Security
-- **vitest 2.1 → 5.0** (dev only): clears the `npm audit` advisories in vitest, vite, esbuild and tinypool. JS tests now run on Node 22/24/26 (vitest 5 needs Node ≥ 22.12); the hook itself is unchanged.
-- **Private session files**: `~/.claude/constellation/` is created `0700` and session files are written `0600`, since they hold the start of shell commands.
-- **Lock-screen image** goes to the per-user runtime dir (GLib, falls back to `~/.cache`) instead of `/tmp` when `XDG_RUNTIME_DIR` is unset.
-- **Installer** quotes the node and hook paths in the hook commands, so a checkout path with spaces works.
+- **vitest 2.1 → 5.0** (dev only): clears the `npm audit` advisories in vitest, vite, esbuild and tinypool. JS tests now run on Node 22/24/26 (vitest 5 needs Node ≥ 22.12); the hook itself is unchanged (#12).
+- **Private session files**: `~/.claude/constellation/` is created `0700` and session files are written `0600`, since they hold the start of shell commands (#12).
+- **Lock-screen image** goes to the per-user runtime dir (GLib, falls back to `~/.cache`) instead of `/tmp` when `XDG_RUNTIME_DIR` is unset (#12).
+- **Installer** quotes the node and hook paths in the hook commands, so a checkout path with spaces works (#12).
 
 ## [0.1.0] - 2026-10-23
 
