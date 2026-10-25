@@ -240,6 +240,12 @@ describe("HUD with Promview", function()
     s.ok, s.error, s.auth = false, "sign in needed", true
     R.set_alerts(s)
     assert.is_truthy(draw().text_matching("sign in needed: run constellation%-promview%-login"))
+    -- Alerts from promview-desktop: signing in happens from its tray, on screen and locked.
+    s.via = "desktop"
+    assert.is_truthy(draw().text_matching("sign in needed: sign in from the Promview tray"))
+    assert.is_true(R.write_alerts(s))
+    R.set_alerts(R.read_alerts())
+    assert.is_truthy(draw({ private = true }).text_matching("sign in from the Promview tray"))
   end)
 
   it("caps the cards to the screen and says how many more", function()

@@ -64,7 +64,7 @@ end
 P.SECRET_SERVICE = "claude-constellation-promview"
 local FETCH = [[
 server=$1; shift
-token=$(secret-tool lookup service "$0" server "$server" 2>/dev/null) || token=
+token=$(timeout 5 secret-tool lookup service "$0" server "$server" 2>/dev/null) || token=
 if [ -n "$token" ]; then printf 'Authorization: Bearer %s\n' "$token" | curl -H @- "$@"; exit $?; fi
 exec curl "$@"
 ]]
@@ -72,7 +72,7 @@ exec curl "$@"
 -- argv for awful.spawn: the poll, run by sh.
 function P.command(cfg)
   return { "sh", "-c", FETCH, P.SECRET_SERVICE, cfg.url,
-    "-sS", "-f", "--max-time", "10", "-H", "Accept: application/json", P.url(cfg) }
+    "-sS", "-f", "--proto", "=https,http", "--max-time", "10", "-H", "Accept: application/json", P.url(cfg) }
 end
 
 -- A failed poll -> message, and whether signing in again would fix it (HTTP 401).

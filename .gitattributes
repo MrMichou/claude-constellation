@@ -10,4 +10,5 @@ scripts/ export-ignore
 test/ export-ignore
 spec/ export-ignore
 demo/ export-ignore
+e2e/ export-ignore
 docs/ export-ignore

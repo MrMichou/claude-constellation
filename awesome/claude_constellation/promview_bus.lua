@@ -12,20 +12,29 @@ local TIMEOUT_MS = 15000
 
 local B = { NAME = NAME }
 
--- A D-Bus failure -> message, and whether signing in again would fix it. The desktop names the
--- error (org.promview.Desktop.Error.SignInNeeded / Unreachable); anything else, such as the
--- desktop going away mid-call, is just a message.
+-- D-Bus errors from a desktop that owns the name but doesn't offer this interface (a release
+-- without it, or a newer one that changed it): the caller should go back to curl.
+local UNSUPPORTED = { "Error.UnknownMethod", "Error.UnknownInterface", "Error.UnknownObject" }
+
+-- A D-Bus failure -> message, whether signing in again would fix it, and whether the desktop
+-- lacks the interface. The desktop names the error (org.promview.Desktop.Error.SignInNeeded /
+-- Unreachable); anything else, such as the desktop going away mid-call, is just a message.
 function B.failure(err)
   local msg = tostring(type(err) == "table" and err.message or err or "unknown error")
-  if msg:find("Error.SignInNeeded", 1, true) then return "sign in needed", true end
+  if msg:find("Error.SignInNeeded", 1, true) then return "sign in needed", true, false end
+  local unsupported = false
+  for _, e in ipairs(UNSUPPORTED) do
+    if msg:find("org.freedesktop.DBus." .. e, 1, true) then unsupported = true end
+  end
   msg = msg:gsub("^GDBus%.Error:[%w%._]+: ", "")
-  return msg, false
+  return msg, false, unsupported
 end
 
 -- Opens the session bus and watches for the desktop. nil, message when there is no bus.
 --   opts.on_owner(owned)  the desktop appeared (true) or went away (false)
 --   opts.on_change()      the desktop says the alerts may have changed
--- The returned object has :owned() and :get_alerts(cfg, cb); cb(body) or cb(nil, message, signin).
+-- The returned object has :owned() and :get_alerts(cfg, cb); cb(body) or
+-- cb(nil, message, signin, unsupported) (see B.failure).
 function B.open(opts)
   opts = opts or {}
   local lgi = not (opts.gio and opts.glib and opts.closure) and require("lgi") or nil
@@ -65,8 +74,7 @@ function B.open(opts)
           local body = reply:get_child_value(0):get_string()
           return cb(body)
         end
-        local msg, signin = B.failure(done and err or reply)
-        cb(nil, msg, signin)
+        cb(nil, B.failure(done and err or reply))
       end)
   end
 

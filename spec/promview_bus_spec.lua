@@ -103,6 +103,20 @@ describe("promview_bus.lua", function()
     assert.is_false(signin)
   end)
 
+  it("flags a desktop without the interface, so the caller can go back to curl", function()
+    local bus = B.open({ gio = g, glib = GLib, closure = identity })
+    local msg, signin, unsupported
+    bus:get_alerts({ limit = 10 }, function(_, m, s, u) msg, signin, unsupported = m, s, u end)
+    g.calls[1].cb(g.conn, { err = "GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: No such method" })
+    assert.are.equal("No such method", msg)
+    assert.is_false(signin)
+    assert.is_true(unsupported)
+
+    bus:get_alerts({ limit = 10 }, function(_, _, _, u) unsupported = u end)
+    g.calls[2].cb(g.conn, { err = "GDBus.Error:org.promview.Desktop.Error.Unreachable: HTTP 500" })
+    assert.is_false(unsupported)
+  end)
+
   it("has no bus to open when the session bus is missing", function()
     g.no_bus = true
     assert.is_nil(B.open_safe({ gio = g, glib = GLib, closure = identity }))

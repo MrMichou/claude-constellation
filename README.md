@@ -7,6 +7,7 @@ Animated wallpaper for AwesomeWM: every active Claude Code session shows up as a
 - **Node**: pulses with the session state. Accent blue for `thinking`, the tool kind's colour for `tool`, blinking yellow for a pending permission, grey for `done`/`idle`. A session is dimmed after 10 min of inactivity and hidden after 3 h.
 - **Clawd emote**: as in [claude-status-bar](https://github.com/MrMichou/claude-status-bar-awesomewm), each node shows an animated crab matching its state: *thinking*, *typing* during a tool call, *listening* while waiting for a permission, *birthday* for 30 s after a turn ends, *sleeping* when the session is idle. Artwork: [xixicc186/clawd-emotes-skill](https://github.com/xixicc186/clawd-emotes-skill).
 - **Satellites**: the session's last 10 targets. Their link fades out over 5 min, and a pulse travels along the link on every tool call.
+- **Subagents**: every subagent a session spawns is a mini Clawd circling it, labelled with the Agent call's description: it runs during a tool call (with its last targets as tiny dots), walks while thinking, stops and listens on a permission (and catches up afterwards), then parties and fades out once done. Past 6 running subagents they are grouped by type ("general-purpose ×10") with the most urgent member's state, and past 6 groups the smallest merge into "+k agents". On the lock screen, only the agent type is shown.
 - **Links between sessions**: two sessions that used the same resource within the last half hour are joined by a labelled curve ("⇄ tmux 0", "⇄ deploy.yml") with a glow running along it. Recognised resources: the same file (Read/Edit/Write), or the same tmux session driven via `tmux … -t <target>` (including `-t $P` with `P=0:0`, or a `for p in 0:0.0 0:0.1` loop). On the lock screen, only "tmux" / "file" is shown.
 - **Colours by kind**: file = blue, shell = green, search = cyan, web = magenta, agent = yellow, mcp = red.
 
@@ -43,7 +44,7 @@ constellation-layout prev
 constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
 ```
 
-`install.js` links the command into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 
@@ -101,7 +102,7 @@ The `match` and `limit` lines apply the same way. While the desktop is pushing c
 
 ## How it works
 
-- `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls) and deletes the file on `SessionEnd`.
+- `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls, subagents) and deletes the file on `SessionEnd`. Subagents come from `SubagentStart`/`SubagentStop` and from the `agent_id` that tool events carry when a subagent runs them, so their calls never show up as the session's own.
 - **Sessions already open**: `render.lua` also reads Claude Code's internal registry (`~/.claude/sessions/<pid>.json`) to show, idle, live sessions that have no hook file yet (opened before the install, or with no activity). The process must exist and its start time must match. Undocumented format: at worst these sessions don't show up, and the hooks stay the main source.
 - `awesome/claude_constellation/` is the Lua module: `render.lua` reads the sessions and draws them (cairo, no Awesome dependency) through one of the `layouts/`, `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
 - **GPU or CPU**: by default (`auto`) it renders on the GPU whenever one is found (a graphics driver other than a firmware framebuffer or virtual display bound to `/sys/class/drm/cardN`): it draws straight onto the X surface, which the X server renders with the driver, and keeps the cached glows and Clawd frames as X pixmaps in video memory. Without a GPU it draws into an in-memory image (pixman) and copies the frame in one paint. The check runs every second, so it follows a GPU that appears or goes away; a GPU frame that fails switches to the CPU for the rest of the session. To force one (remembered, and used by the lock screen too):
@@ -109,7 +110,15 @@ The `match` and `limit` lines apply the same way. While the desktop is pushing c
   ```sh
   awesome-client 'return require("ui.desktop.claude_constellation").set_backend("cpu")'   # or "gpu", "auto"
   ```
-- **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
+- **Covered by a window**: while one window covers the whole wallpaper (maximised, fullscreen, or alone in a tiled layout), nothing is redrawn; the animation resumes when it moves away. Windows Awesome draws translucent don't count, but a compositor's own transparency rules (picom `opacity-rule`) can't be seen: behind such a window the wallpaper simply stays still.
+- **Eco mode**: nothing moves, not even the Clawd emotes, and one frame a second follows the sessions. Measured on a 3-screen desktop with a working session, the wallpaper went from about 10% of a CPU core to about 3%. `auto` (the default) turns it on while on battery (system battery `Discharging`), `on` always, `off` never; the choice is remembered and applies to the lock screen too:
+
+  ```sh
+  constellation-eco          # show the mode: "auto (off)"
+  constellation-eco toggle   # or on, off, auto
+  ```
+
+  With eco `off`, a battery still freezes everything but the Clawd emotes, at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
 
@@ -144,12 +153,15 @@ To uninstall: `node install.js --uninstall` (hooks, module link and the `constel
 
 ## Demos
 
-The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude`. The scenario lives in `demo/record.lua`; its `layouts` mode cycles through every layout (`docs/layouts.gif`, and the frames `docs/layouts-more.png` was assembled from).
+![A big multi-agent workflow: runners grouped by type, then ungrouped as waves finish](docs/subagents.gif)
+
+The GIFs in `docs/` are rendered offline by the real engine (`render.lua`) from fake sessions and a simulated clock: `demo/record.sh` (lua5.4, lgi, ffmpeg) regenerates them without touching `~/.claude` (`demo/record.sh subagents` for just one). The scenarios live in `demo/record.lua`: `sessions` for the everyday sessions, `workflow` for a fan-out to ~30 subagents of 9 types; its `layouts` mode cycles through every layout (`docs/layouts.gif`, and the frames `docs/layouts-more.png` was assembled from).
 
 ## Tests
 
 ```sh
 npm ci && make test   # = npm test + luacheck + Lua specs
+make test-e2e         # installer -> hook -> renderer, in a throwaway $HOME
 make test-docker      # luacheck + Lua specs in the CI's Arch container (no local busted/luacheck needed)
 ```
 
@@ -157,7 +169,8 @@ make test-docker      # luacheck + Lua specs in the CI's Arch container (no loca
 - `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading (hook files and Claude Code's registry), battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links, the battery freeze, every layout (each state, static and private, ordering by urgency) and the remembered layout, asserted through a recording cairo context, plus real cairo frames for every layout and sprite-asset checks; `saver.lua` refuses to run without a window, and its sh prologue picks the first Lua with lgi (fake interpreters on `PATH`).
 - The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
-- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.
+- `e2e/` (`make test-e2e`, or `make test-e2e-docker` for Lua 5.4, 5.1 and LuaJIT): installs into a throwaway `$HOME`, feeds the hook commands written into `settings.json` Claude Code-shaped events (two sessions sharing a file, one fanning out to 17 subagents of 8 types, ten of them started in parallel), checks the session files, then loads the installed module and draws every layout, public and private, from those files with each Lua the saver may use. It ends with a few frames of both demo scenarios.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 22/24/26, luacheck, the Lua specs, and the e2e test under Lua 5.4, 5.1 and LuaJIT in an Arch container.
 
 ## Releasing
 

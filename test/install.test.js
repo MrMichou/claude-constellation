@@ -5,8 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { tmpHome, runNode, readJson, exists, INSTALL, TRACK, ROOT } from "./helpers.js";
 
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
-  "PermissionRequest", "Stop", "SessionEnd"];
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+  "Notification", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 
 describe("install.js", () => {
   let h;
@@ -31,10 +31,13 @@ describe("install.js", () => {
   it("passes the right event argument and matcher", async () => {
     await install();
     const hooks = readJson(h.settings).hooks;
-    expect(ours(hooks.PreToolUse)[0].command).toMatch(/track\.js pre$/);
-    expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js end$/);
+    expect(ours(hooks.PreToolUse)[0].command).toMatch(/track\.js' pre$/);
+    expect(ours(hooks.SessionEnd)[0].command).toMatch(/track\.js' end$/);
     expect(hooks.PreToolUse.at(-1).matcher).toBe("*");
     expect(hooks.Stop.at(-1).matcher).toBeUndefined();
+    expect(ours(hooks.SubagentStart)[0].command).toMatch(/track\.js' substart$/);
+    expect(ours(hooks.SubagentStop)[0].command).toMatch(/track\.js' substop$/);
+    expect(hooks.SubagentStop.at(-1).matcher).toBe("*");
   });
 
   it("keeps other settings and hooks, and backs up the original", async () => {
@@ -50,6 +53,19 @@ describe("install.js", () => {
     expect(readJson(h.settings + ".bak-constellation")).toEqual(original);
   });
 
+  it("replaces hooks left by another checkout of claude-constellation", async () => {
+    writeSettings({ hooks: { PreToolUse: [
+      { matcher: "*", hooks: [{ type: "command", command: "/usr/bin/node /old/claude-constellation/hooks/track.js pre" }] },
+      { matcher: "*", hooks: [{ type: "command", command: "node /x/claude-constellation-wt/hooks/track.js pre" }] },
+      { matcher: "*", hooks: [{ type: "command", command: "node /other/project/hooks/track.js pre" }] },
+    ] } });
+    await install();
+    const cmds = readJson(h.settings).hooks.PreToolUse.flatMap((e) => e.hooks.map((x) => x.command));
+    expect(cmds.filter((c) => c.includes("/old/") || c.includes("-wt/"))).toEqual([]);
+    expect(cmds).toContain("node /other/project/hooks/track.js pre");
+    expect(cmds.filter((c) => c.includes(TRACK))).toHaveLength(1);
+  });
+
   it("is idempotent", async () => {
     await install();
     await install();
@@ -62,15 +78,16 @@ describe("install.js", () => {
     expect(fs.realpathSync(link())).toBe(path.join(ROOT, "awesome", "claude_constellation"));
   });
 
-  const cmdLink = () => path.join(h.home, ".local", "bin", "constellation-layout");
+  const cmdLink = (name = "constellation-layout") => path.join(h.home, ".local", "bin", name);
 
-  it("links the constellation-layout command into ~/.local/bin, and removes it", async () => {
-    await install();
-    await install(); // idempotent
-    expect(fs.readlinkSync(cmdLink())).toBe(path.join(ROOT, "bin", "constellation-layout"));
-    await install("--uninstall");
-    expect(exists(cmdLink())).toBe(false);
-  });
+  it.each(["constellation-layout", "constellation-eco"])(
+    "links the %s command into ~/.local/bin, and removes it", async (name) => {
+      await install();
+      await install(); // idempotent
+      expect(fs.readlinkSync(cmdLink(name))).toBe(path.join(ROOT, "bin", name));
+      await install("--uninstall");
+      expect(exists(cmdLink(name))).toBe(false);
+    });
 
   it("links constellation-promview-login too, and removes it", async () => {
     const login = path.join(h.home, ".local", "bin", "constellation-promview-login");
@@ -85,6 +102,7 @@ describe("install.js", () => {
     fs.writeFileSync(cmdLink(), "#!/bin/sh\n");
     await install();
     expect(fs.lstatSync(cmdLink()).isSymbolicLink()).toBe(false);
+    expect(fs.readlinkSync(cmdLink("constellation-eco"))).toBe(path.join(ROOT, "bin", "constellation-eco"));
     await install("--uninstall");
     expect(fs.readFileSync(cmdLink(), "utf8")).toBe("#!/bin/sh\n");
   });
