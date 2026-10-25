@@ -92,6 +92,13 @@ function linkKeys(t, input) {
   return [];
 }
 
+// Project shown for the session. A subagent with `isolation: "worktree"` runs in
+// <repo>/.claude/worktrees/<agent-id> under the parent's session id: it still is <repo>.
+function projectName(cwd, prev) {
+  if (!cwd) return prev || "";
+  return path.basename(cwd.replace(/\/\.claude\/worktrees\/[^/]+(?:\/.*)?$/, ""));
+}
+
 function run(event, p) {
   const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
   if (!sid) return;
@@ -108,21 +115,31 @@ function run(event, p) {
   const now = Date.now() / 1000;
   const s = {
     sid,
-    project: p.cwd ? path.basename(p.cwd) : prev.project || "",
+    project: projectName(p.cwd, prev.project),
     state: prev.state || "idle",
     tool: prev.tool || "",
     kind: prev.kind || "",
     target: prev.target || "",
     history: prev.history || [],
     links: prev.links || {},
-    // Tool calls as { k: kind, s: start, e: end }; `e` is missing while the call runs.
+    // Tool calls as { k: kind, s: start, e: end, id }; `e` is missing while the call runs, and
+    // a running call also keeps its { t: tool, g: target } to be shown again (see "post").
     timeline: prev.timeline || [],
     ts: now,
   };
-  // The running call ends with its post, the next call or the turn; a permission prompt or a
-  // notification happens during the call, so it stays open.
-  const open = s.timeline.at(-1);
-  if (open && open.e === undefined && !["permreq", "notify"].includes(event)) open.e = now;
+  // Calls carry their tool_use_id: subagents run several at once, and each call ends with its
+  // own post. The turn's end (stop, next prompt) closes whatever is left. A call without an id
+  // (older Claude Code) ends with the next event, except a permission prompt or a notification,
+  // which happen during the call.
+  const id = p.tool_use_id;
+  for (const e of s.timeline) {
+    if (e.e !== undefined) continue;
+    if (e.id ? ["stop", "prompt"].includes(event) || (event === "post" && e.id === id)
+      : !["permreq", "notify"].includes(event)) {
+      e.e = now;
+      delete e.t; delete e.g;
+    }
+  }
 
   switch (event) {
     case "start": break; // registers the session as idle so it shows before its first prompt
@@ -133,7 +150,7 @@ function run(event, p) {
       Object.assign(s, { state: "tool", tool: t, kind: d.kind, target: d.target });
       s.history.push({ tool: t, kind: d.kind, target: d.target, ts: now });
       s.history = s.history.slice(-HISTORY_MAX);
-      s.timeline.push({ k: d.kind, s: now });
+      s.timeline.push({ k: d.kind, s: now, ...(id && { id, t, g: d.target }) });
       s.timeline = s.timeline.filter((e) => now - e.s < TIMELINE_TTL).slice(-TIMELINE_MAX);
       for (const l of linkKeys(t, p.tool_input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
       s.links = Object.fromEntries(Object.entries(s.links)
@@ -142,7 +159,14 @@ function run(event, p) {
         .slice(0, LINKS_MAX));
       break;
     }
-    case "post": s.state = "thinking"; break;
+    case "post": {
+      // Another call still running (parallel subagents): show it rather than "thinking". It
+      // may have left the 10-call history long ago, so its label comes from the timeline.
+      const running = s.timeline.filter((e) => e.e === undefined).at(-1);
+      if (!running) s.state = "thinking";
+      else Object.assign(s, { state: "tool", tool: running.t || s.tool, kind: running.k, target: running.g ?? s.target });
+      break;
+    }
     case "notify": {
       const m = String(p.message || "").toLowerCase();
       s.state = /permission|approve|allow/.test(m) ? "permission" : "waiting";
@@ -153,9 +177,10 @@ function run(event, p) {
     default: return;
   }
 
-  fs.mkdirSync(dir, { recursive: true });
+  // Private: session files hold the start of shell commands, which may contain secrets.
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = file + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(s));
+  fs.writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 
@@ -167,5 +192,5 @@ if (require.main === module) {
     try { run(event, JSON.parse(raw || "{}")); } catch {}
   });
 } else {
-  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys };
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, projectName };
 }

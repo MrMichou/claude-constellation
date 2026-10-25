@@ -15,8 +15,10 @@ const track = path.join(__dirname, "hooks", "track.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const linkDir = path.join(home, ".config", "awesome", "ui", "desktop");
 const link = path.join(linkDir, "claude_constellation");
+// Commands linked into ~/.local/bin, with what they do.
 const COMMANDS = {
   "constellation-layout": "switch layouts: constellation-layout [next|lanes|cards|...]",
+  "constellation-eco": "eco mode: constellation-eco [toggle|on|off|auto]",
   "constellation-promview-login": "sign the HUD in to an OIDC Promview",
 };
 
@@ -25,12 +27,15 @@ const EVENTS = {
   UserPromptSubmit: "prompt",
   PreToolUse: "pre",
   PostToolUse: "post",
+  PostToolUseFailure: "post", // a failed call ends there, not in PostToolUse
   Notification: "notify",
   PermissionRequest: "permreq",
   Stop: "stop",
   SessionEnd: "end",
 };
-const MATCHER = new Set(["PreToolUse", "PostToolUse", "PermissionRequest"]);
+const MATCHER = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]);
+// Hook commands run through a shell: quote paths so a checkout path with spaces still works.
+const sh = (s) => `'${s.replace(/'/g, "'\\''")}'`;
 
 // A fresh machine may have no settings.json yet: start from {} (and keep a backup otherwise).
 let settings = {};
@@ -47,7 +52,7 @@ for (const [evt, arg] of Object.entries(EVENTS)) {
     .map((e) => ({ ...e, hooks: (e.hooks || []).filter((h) => !(h.command || "").includes(track)) }))
     .filter((e) => e.hooks.length > 0);
   if (!uninstall) {
-    const entry = { hooks: [{ type: "command", command: `${process.execPath} ${track} ${arg}` }] };
+    const entry = { hooks: [{ type: "command", command: `${sh(process.execPath)} ${sh(track)} ${arg}` }] };
     if (MATCHER.has(evt)) entry.matcher = "*";
     entries.push(entry);
   }
@@ -65,7 +70,7 @@ if (!uninstall) {
 }
 
 // A command link is only replaced or removed when it is ours: never clobber another tool.
-for (const [name, what] of Object.entries(COMMANDS)) {
+for (const [name, help] of Object.entries(COMMANDS)) {
   const cmd = path.join(__dirname, "bin", name);
   const cmdLink = path.join(home, ".local", "bin", name);
   let cmdTarget = null;
@@ -76,7 +81,7 @@ for (const [name, what] of Object.entries(COMMANDS)) {
     if (cmdFree || cmdTarget === cmd) {
       fs.mkdirSync(path.dirname(cmdLink), { recursive: true });
       fs.symlinkSync(cmd, cmdLink);
-      console.log(`Linked ${cmdLink} (${what})`);
+      console.log(`Linked ${cmdLink} (${help})`);
     } else {
       console.log(`Skipped ${cmdLink}: it already exists and is not ours`);
     }

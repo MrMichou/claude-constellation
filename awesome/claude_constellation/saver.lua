@@ -35,6 +35,7 @@ R.set_palette(R.read_json(R.CACHE_DIR .. "theme.json"))
 local layout = R.read_layout() -- the one chosen on the desktop
 local backend_choice = R.read_backend() -- likewise; "auto" is rechecked every second
 local backend = R.resolve_backend(backend_choice)
+local eco_choice = R.read_eco() -- likewise
 
 Gtk.init()
 local display = Gdk.Display.get_default()
@@ -42,7 +43,7 @@ local win = GdkX11.X11Window.foreign_new_for_display(display, xid)
 
 -- Each frame is drawn off-screen, then copied to the window in one paint (no flicker). On the
 -- GPU the buffer is a surface similar to the window (an X pixmap), else an in-memory image.
-local static = false
+local static, eco = false, false
 local buf, buf_cr, bw, bh, bb
 local function frame()
   local w, h = win:get_width(), win:get_height()
@@ -52,14 +53,15 @@ local function frame()
     bw, bh, bb = w, h, backend
     buf_cr = cairo.Context(buf)
   end
-  R.draw(buf_cr, w, h, { private = true, static = static, layout = layout, backend = backend })
+  R.draw(buf_cr, w, h, { private = true, static = static, still = eco, layout = layout, backend = backend })
   local out = Gdk.cairo_create(win)
   out:set_source_surface(buf, 0, 0)
   out:paint()
   display:flush()
 end
 
--- Same pacing as the desktop layer: fast while a session works, idle rate otherwise or on battery.
+-- Same pacing as the desktop layer: fast while a session works, idle rate otherwise or on
+-- battery, a frame a second in eco mode.
 local fps, timer_id, last_err
 local function schedule(want)
   if want == fps and timer_id then return end
@@ -86,9 +88,11 @@ local function poll()
   if alerts and os.time() - alerts.fetched > 300 then alerts.ok, alerts.error = false, "stale" end
   R.set_alerts(alerts)
   static = R.on_battery()
+  eco = R.eco_active(eco_choice, static)
   if backend_choice == "auto" then backend = R.resolve_backend("auto") end
   -- No session: an empty background, repainted once a second in case the window was exposed.
-  schedule((count == 0 and not alerts) and 1 or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
+  schedule(((count == 0 and not alerts) or eco) and R.FPS_ECO
+    or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
   collectgarbage("step") -- per-frame cairo contexts are only freed by the GC
   return true
 end

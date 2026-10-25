@@ -43,7 +43,7 @@ constellation-layout prev
 constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
 ```
 
-`install.js` links the command into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 
@@ -99,7 +99,15 @@ The lock screen shows the same board, alert names and hosts included, so you can
   ```sh
   awesome-client 'return require("ui.desktop.claude_constellation").set_backend("cpu")'   # or "gpu", "auto"
   ```
-- **On battery** (system battery `Discharging`), only the Clawd emotes stay animated: drift, pulsing, orbits and pulses are frozen, and redraws are capped at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
+- **Covered by a window**: while one window covers the whole wallpaper (maximised, fullscreen, or alone in a tiled layout), nothing is redrawn; the animation resumes when it moves away. Windows Awesome draws translucent don't count, but a compositor's own transparency rules (picom `opacity-rule`) can't be seen: behind such a window the wallpaper simply stays still.
+- **Eco mode**: nothing moves, not even the Clawd emotes, and one frame a second follows the sessions. Measured on a 3-screen desktop with a working session, the wallpaper went from about 10% of a CPU core to about 3%. `auto` (the default) turns it on while on battery (system battery `Discharging`), `on` always, `off` never; the choice is remembered and applies to the lock screen too:
+
+  ```sh
+  constellation-eco          # show the mode: "auto (off)"
+  constellation-eco toggle   # or on, off, auto
+  ```
+
+  With eco `off`, a battery still freezes everything but the Clawd emotes, at 8 fps. Set `ON_BATTERY = "off"` in `init.lua` to hide the layer entirely on battery.
 
 ## Installation
 
@@ -147,7 +155,7 @@ make test-docker      # luacheck + Lua specs in the CI's Arch container (no loca
 - `spec/` (busted, Lua 5.4 + lgi): `render.lua` session loading (hook files and Claude Code's registry), battery detection on a fake `/sys/class/power_supply`, palette, labels and private mode, shared-resource links, the battery freeze, every layout (each state, static and private, ordering by urgency) and the remembered layout, asserted through a recording cairo context, plus real cairo frames for every layout and sprite-asset checks; `saver.lua` refuses to run without a window, and its sh prologue picks the first Lua with lgi (fake interpreters on `PATH`).
 - The layouts avoid Lua 5.3-only syntax (`//`, `utf8`, two-argument `math.atan`), since the saver may run under Lua 5.3 or LuaJIT.
 - The Lua specs run with `lua5.4` directly (`make test-lua`): Arch's `busted` binary targets Lua 5.5, where lgi does not load. Needs `lua54-lgi lua54-busted luacheck`.
-- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 18/20/22, luacheck, and the Lua specs in an Arch container.
+- CI (`.github/workflows/ci.yml`) runs the JS tests on Node 22/24/26, luacheck, and the Lua specs in an Arch container.
 
 ## Releasing
 

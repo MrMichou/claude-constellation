@@ -35,10 +35,11 @@ local CLAWD = {
   rest = "crab",
 }
 
-local R = { FPS_ACTIVE = 30, FPS_IDLE = 8 }
+local R = { FPS_ACTIVE = 30, FPS_IDLE = 8, FPS_ECO = 1 }
 
 -- Where session files, Claude Code's session registry (internal, best-effort), processes,
--- power supplies, graphics devices and the cache (theme, chosen layout and backend) live;
+-- power supplies, graphics devices and the cache (theme, chosen layout, backend and eco mode)
+-- live;
 -- overridable for tests.
 local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
 local PS_DIR = "/sys/class/power_supply/"
@@ -570,8 +571,9 @@ function K.node(cr, s, i, x, y, f, size)
   local name, loops = emote(s, t)
   local frames = sprite_set(name, cr)
   if #frames > 0 then
-    -- Desynced per session.
-    draw_sprite(cr, frames, loops and math.floor(t * SPRITE_FPS + i * 7) or 0, x, y, A, size)
+    -- Desynced per session; the first frame when still (eco mode).
+    local idx = loops and not f.still and math.floor(t * SPRITE_FPS + i * 7) or 0
+    draw_sprite(cr, frames, idx, x, y, A, size)
   else
     set(cr, col, A); cr:arc(x, y, 5 * k, 0, 2 * math.pi); cr:fill()
   end
@@ -668,12 +670,31 @@ function R.read_alerts()
   return d
 end
 
+-- Eco mode: "on" always, "auto" on battery, "off" never. While it is on nothing moves, not even
+-- the Clawd emotes, and a frame a second is enough to follow the sessions. Shared with the
+-- lock-screen saver.
+R.ECO_MODES = { "auto", "on", "off" }
+function R.read_eco()
+  local name = read_line(R.CACHE_DIR .. "eco")
+  for _, m in ipairs(R.ECO_MODES) do if m == name then return name end end
+  return "auto"
+end
+function R.write_eco(name)
+  local f = io.open(R.CACHE_DIR .. "eco", "w")
+  if not f then return false end
+  f:write(name, "\n"); f:close()
+  return true
+end
+function R.eco_active(choice, battery)
+  return choice == "on" or (choice == "auto" and battery == true)
+end
+
 -- Draw one frame. opts.layout picks the presentation (constellation by default);
--- opts.static freezes everything but the Clawd emotes (battery mode); opts.private drops what
--- could leak on a lock screen: paths, commands and the tool target (Promview alerts stay).
--- opts.backend is "gpu" or "cpu" (the default; see R.resolve_backend): on the CPU, a target that
--- isn't an image (an X surface) gets the frame from an in-memory buffer, in one paint.
--- opts.area is the screen's workarea (see Layouts).
+-- opts.static freezes everything but the Clawd emotes (battery mode), opts.still the emotes
+-- too (eco mode); opts.private drops what could leak on a lock screen: paths, commands and the
+-- tool target (Promview alerts stay). opts.backend is "gpu" or "cpu" (the default; see
+-- R.resolve_backend): on the CPU, a target that isn't an image (an X surface) gets the frame
+-- from an in-memory buffer, in one paint. opts.area is the screen's workarea (see Layouts).
 local cpu_buf, cpu_cr
 function R.draw(cr, w, h, opts)
   opts = opts or {}
@@ -691,12 +712,13 @@ function R.draw(cr, w, h, opts)
     end
   end
   local t = now()
-  local f = { t = t, ta = opts.static and 0 or t, static = opts.static, private = opts.private,
+  local static = opts.static or opts.still
+  local f = { t = t, ta = static and 0 or t, static = static, still = opts.still, private = opts.private,
     list = {}, links = links, gen = generation, alerts = alerts, area = opts.area }
   for i, sid in ipairs(order) do
     local s = sessions[sid]
     s.stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)
-    s.alpha = s.alpha + (((s.stale and 0.35) or 1) - s.alpha) * (opts.static and 1 or 0.08)
+    s.alpha = s.alpha + (((s.stale and 0.35) or 1) - s.alpha) * (static and 1 or 0.08)
     f.list[i] = s
   end
   set(cr, C.bg); cr:paint()
