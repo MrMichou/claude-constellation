@@ -31,9 +31,15 @@ const EVENTS = {
   Notification: "notify",
   PermissionRequest: "permreq",
   Stop: "stop",
+  SubagentStart: "substart",
+  SubagentStop: "substop",
   SessionEnd: "end",
 };
-const MATCHER = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]);
+// Our hooks, from this checkout or any other clone/worktree of claude-constellation: replacing
+// them all keeps a second checkout from leaving an older track.js running alongside.
+const OURS = /claude-constellation[^\s/]*\/hooks\/track\.js\b/;
+const ours = (cmd) => (cmd || "").includes(track) || OURS.test(cmd || "");
+const MATCHER = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "SubagentStart", "SubagentStop"]);
 // Hook commands run through a shell: quote paths so a checkout path with spaces still works.
 const sh = (s) => `'${s.replace(/'/g, "'\\''")}'`;
 
@@ -49,7 +55,7 @@ settings.hooks = settings.hooks || {};
 
 for (const [evt, arg] of Object.entries(EVENTS)) {
   const entries = (settings.hooks[evt] || [])
-    .map((e) => ({ ...e, hooks: (e.hooks || []).filter((h) => !(h.command || "").includes(track)) }))
+    .map((e) => ({ ...e, hooks: (e.hooks || []).filter((h) => !ours(h.command)) }))
     .filter((e) => e.hooks.length > 0);
   if (!uninstall) {
     const entry = { hooks: [{ type: "command", command: `${sh(process.execPath)} ${sh(track)} ${arg}` }] };

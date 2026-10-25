@@ -9,12 +9,17 @@ All notable changes to claude-constellation are documented here. This project fo
 ### Added
 - **Eco mode** (`constellation-eco [toggle|on|off|auto]`, or `set_eco()`): nothing moves, not even the Clawd emotes, and one frame a second follows the sessions; about 3% of a CPU core instead of 10% with a working session. `auto`, the default, turns it on while on battery (instead of the 8 fps freeze), and the lock screen follows the same choice. `install.js` links the new command.
 - **No redraws while a window covers the whole wallpaper** (maximised, fullscreen, or alone in a tiled layout); the animation resumes when it moves away.
+- **Subagents as mini Clawds.** Each subagent circles its session, labelled with its Agent call's description: running during a tool call, walking while thinking, listening on a permission, partying then fading once done. Past 6 running subagents they are grouped by type ("general-purpose ×10"), and past 6 groups the smallest merge into "+k agents". The hook now listens to `SubagentStart`/`SubagentStop` (re-run `node install.js`) and routes tool events carrying `agent_id` to the subagent instead of the session.
+- **End-to-end test** (`e2e/run.sh`, `make test-e2e`), also run in CI: installer, then the installed hook commands fed a subagent fan-out, then every layout drawn from the resulting files under Lua 5.4, 5.1 and LuaJIT.
+- **`workflow` demo scenario** (`demo/record.sh subagents`): a big multi-agent fan-out, rendered to `docs/subagents.gif`.
 - **Promview alerts in the HUD.** With a url in `~/.config/claude-constellation/promview.conf` (or `PROMVIEW_URL`), the hud layout polls a [Promview](https://github.com/cropalato/promview) server with `curl` in the background and turns the desktop left of the sessions into a board behind the windows: the count per severity in large type, and one card per alert name (count, newest age, instances), most severe first; the last alerts stay, dimmed, while the server can't be reached. The lock screen shows the same board, through a cache file the desktop layer keeps up to date. For a server that requires OIDC, `constellation-promview-login` signs in through the browser like the Promview desktop client and keeps the session token in the keyring (`secret-tool`); the HUD says "sign in needed" when it expires.
 
 ### Fixed
 - **Sessions with subagents** (which share the parent's session id):
   - the node keeps its project name instead of taking the subagent's worktree (`agent-<id>`);
   - parallel tool calls are tracked by `tool_use_id`, so each call ends with its own result and the node stays on a call that is still running (named even once it has left the 10-call history) instead of going back to *thinking*.
+- **Parallel hooks no longer lose updates**: the hook holds `<session>.json.lock` while it rewrites the session file, so subagents fanning out (or parallel tool calls) don't overwrite each other's calls and descriptions.
+- **Re-installing from another checkout** replaces the `track.js` hooks of any `claude-constellation*` clone or worktree instead of leaving the older one running too.
 - **Failed tool calls** end on `PostToolUseFailure` (rerun `node install.js` to add the hook) instead of staying open until the end of the turn.
 
 ### Security

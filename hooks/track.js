@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 // Claude Code hook: records, per session, what the session is doing and which resources
 // it touches, for the AwesomeWM desktop "constellation".
-// Writes ~/.claude/constellation/<session_id>.json atomically. Never fails the hook.
-// Usage: node track.js <start|prompt|pre|post|notify|permreq|stop|end>
+// Writes ~/.claude/constellation/<session_id>.json atomically, under a lock: a session's hooks
+// run concurrently (parallel tool calls, subagents fanning out) and would otherwise overwrite
+// each other's updates. Never fails the hook.
+// Subagents (SubagentStart/Stop, and tool events carrying agent_id) are tracked per session
+// under `agents`, so the renderer can draw them as mini nodes around their session.
+// Usage: node track.js <start|prompt|pre|post|notify|permreq|stop|substart|substop|end>
 
 const fs = require("fs");
 const os = require("os");
@@ -12,6 +16,16 @@ const dir = path.join(os.homedir(), ".claude", "constellation");
 const HISTORY_MAX = 10;
 const LINKS_MAX = 20; // shared-resource keys kept per session
 const LINK_TTL = 3600; // seconds a shared resource stays linkable
+const AGENTS_MAX = 64; // subagents kept per session (big workflows fan out to dozens)
+const AGENT_HISTORY_MAX = 4;
+const AGENT_DONE_KEEP = 60; // seconds a finished subagent stays (the renderer fades it out)
+const AGENT_LOST = 30 * 60; // seconds without events before a running subagent is dropped
+const PENDING_MAX = 16; // Agent tool calls waiting for their SubagentStart
+const PENDING_TTL = 600;
+// Tools a subagent uses to talk to its parent, not resources worth an orbit.
+const INTERNAL_TOOLS = new Set(["SubagentHandback"]);
+const LOCK_WAIT = 3000; // ms to wait for the lock before writing anyway
+const LOCK_STALE = 2000; // ms after which a lock left by a killed hook is broken
 const TIMELINE_TTL = 1800; // seconds of tool calls kept for the swimlanes layout
 const TIMELINE_MAX = 200;
 
@@ -92,6 +106,8 @@ function linkKeys(t, input) {
   return [];
 }
 
+const cleanId = (v) => String(v || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
+
 // Project shown for the session. A subagent with `isolation: "worktree"` runs in
 // <repo>/.claude/worktrees/<agent-id> under the parent's session id: it still is <repo>.
 function projectName(cwd, prev) {
@@ -99,11 +115,102 @@ function projectName(cwd, prev) {
   return path.basename(cwd.replace(/\/\.claude\/worktrees\/[^/]+(?:\/.*)?$/, ""));
 }
 
-function run(event, p) {
-  const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
-  if (!sid) return;
-  const file = path.join(dir, sid + ".json");
+// Drops finished and lost subagents, then the oldest ones past AGENTS_MAX.
+function pruneAgents(agents, now) {
+  const kept = Object.entries(agents).filter(([, a]) =>
+    now - a.ts < (a.state === "done" ? AGENT_DONE_KEEP : AGENT_LOST));
+  kept.sort(([, a], [, b]) => b.ts - a.ts);
+  return Object.fromEntries(kept.slice(0, AGENTS_MAX));
+}
 
+// Applies a subagent's event to its entry; false when there is nothing to record.
+function agentEvent(s, event, p, now) {
+  const id = cleanId(p.agent_id);
+  let a = s.agents[id];
+  if (!a) {
+    // SubagentStop also fires for Claude Code's internal agents (prompt suggestions, /btw),
+    // which never had a SubagentStart: ignore those.
+    if (event === "substop") return false;
+    const type = clip(p.agent_type || "agent", 40);
+    // Label it with the description of the oldest pending Agent call of the same type.
+    const i = s.pending.findIndex((q) => q.type === type);
+    const label = i >= 0 ? s.pending.splice(i, 1)[0].label : "";
+    a = { type, label, state: "thinking", tool: "", kind: "", target: "", history: [], started: now };
+    s.agents[id] = a;
+  }
+  // A finished subagent only comes back through SubagentStart (resumed); late events are noise.
+  if (a.state === "done" && event !== "substart") return false;
+  a.ts = now;
+  switch (event) {
+    case "substart": if (a.state === "done") a.state = "thinking"; break; // resumed
+    case "substop": a.state = "done"; break;
+    case "pre": {
+      const t = p.tool_name || "";
+      if (INTERNAL_TOOLS.has(t)) break;
+      const d = describeTool(t, p.tool_input);
+      Object.assign(a, { state: "tool", tool: t, kind: d.kind, target: d.target });
+      a.history.push({ kind: d.kind, target: d.target, ts: now });
+      a.history = a.history.slice(-AGENT_HISTORY_MAX);
+      break;
+    }
+    case "post": a.state = "thinking"; break;
+    case "permreq": a.state = "permission"; break;
+    case "notify": a.state = /permission|approve|allow/i.test(p.message || "") ? "permission" : "waiting"; break;
+    default: return false;
+  }
+  return true;
+}
+
+function addLinks(s, t, input, now) {
+  for (const l of linkKeys(t, input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
+  s.links = Object.fromEntries(Object.entries(s.links)
+    .filter(([, l]) => now - l.ts < LINK_TTL)
+    .sort(([, a], [, b]) => b.ts - a.ts)
+    .slice(0, LINKS_MAX));
+}
+
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// Runs fn while holding <file>.lock (created exclusively). Gives up waiting after LOCK_WAIT
+// and runs fn anyway: a lost update beats a hook that stalls Claude Code.
+function withLock(file, fn) {
+  const lock = file + ".lock";
+  const deadline = Date.now() + LOCK_WAIT;
+  let fd = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lock, "wx", 0o600);
+    } catch (e) {
+      if (Date.now() > deadline) break;
+      // No data dir yet: create it (another hook may be doing the same) and retry the lock.
+      if (e.code === "ENOENT") { try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {} continue; }
+      if (e.code !== "EEXIST") break;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE) { fs.rmSync(lock, { force: true }); continue; }
+      } catch {}
+      pause(2 + Math.random() * 8);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (fd !== null) {
+      fs.closeSync(fd);
+      fs.rmSync(lock, { force: true });
+    }
+  }
+}
+
+const EVENTS = new Set(["start", "prompt", "pre", "post", "notify", "permreq", "stop", "substart", "substop", "end"]);
+
+function run(event, p) {
+  const sid = cleanId(p.session_id);
+  if (!sid || !EVENTS.has(event)) return;
+  const file = path.join(dir, sid + ".json");
+  withLock(file, () => update(event, p, sid, file));
+}
+
+function update(event, p, sid, file) {
   if (event === "end") {
     fs.rmSync(file, { force: true });
     return;
@@ -122,11 +229,23 @@ function run(event, p) {
     target: prev.target || "",
     history: prev.history || [],
     links: prev.links || {},
+    agents: prev.agents || {},
+    pending: (prev.pending || []).filter((q) => now - q.ts < PENDING_TTL),
+    since: prev.since || now, // when the session's own state last changed
     // Tool calls as { k: kind, s: start, e: end, id }; `e` is missing while the call runs, and
     // a running call also keeps its { t: tool, g: target } to be shown again (see "post").
     timeline: prev.timeline || [],
     ts: now,
   };
+  // A subagent's events update its mini node, never the session's own state; the files it
+  // touches still count for links with other sessions.
+  if (event === "substart" || event === "substop" || (p.agent_id && event !== "prompt" && event !== "stop")) {
+    if (!agentEvent(s, event, p, now)) return;
+    if (event === "pre") addLinks(s, p.tool_name || "", p.tool_input, now);
+    s.agents = pruneAgents(s.agents, now);
+    return write(file, s);
+  }
+
   // Calls carry their tool_use_id: subagents run several at once, and each call ends with its
   // own post. The turn's end (stop, next prompt) closes whatever is left. A call without an id
   // (older Claude Code) ends with the next event, except a permission prompt or a notification,
@@ -141,6 +260,7 @@ function run(event, p) {
     }
   }
 
+  const before = s.state;
   switch (event) {
     case "start": break; // registers the session as idle so it shows before its first prompt
     case "prompt": s.state = "thinking"; break;
@@ -152,11 +272,12 @@ function run(event, p) {
       s.history = s.history.slice(-HISTORY_MAX);
       s.timeline.push({ k: d.kind, s: now, ...(id && { id, t, g: d.target }) });
       s.timeline = s.timeline.filter((e) => now - e.s < TIMELINE_TTL).slice(-TIMELINE_MAX);
-      for (const l of linkKeys(t, p.tool_input)) s.links[l.key] = { kind: l.kind, label: l.label, ts: now };
-      s.links = Object.fromEntries(Object.entries(s.links)
-        .filter(([, l]) => now - l.ts < LINK_TTL)
-        .sort(([, a], [, b]) => b.ts - a.ts)
-        .slice(0, LINKS_MAX));
+      addLinks(s, t, p.tool_input, now);
+      if (t === "Agent" || t === "Task") {
+        const i = p.tool_input || {};
+        s.pending.push({ type: clip(i.subagent_type || "general-purpose", 40), label: clip(i.description, 40), ts: now });
+        s.pending = s.pending.slice(-PENDING_MAX);
+      }
       break;
     }
     case "post": {
@@ -176,7 +297,12 @@ function run(event, p) {
     case "stop": s.state = "done"; break;
     default: return;
   }
+  if (s.state !== before) s.since = now;
+  s.agents = pruneAgents(s.agents, now);
+  write(file, s);
+}
 
+function write(file, s) {
   // Private: session files hold the start of shell commands, which may contain secrets.
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = file + "." + process.pid + ".tmp";
@@ -192,5 +318,5 @@ if (require.main === module) {
     try { run(event, JSON.parse(raw || "{}")); } catch {}
   });
 } else {
-  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, projectName };
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, projectName, pruneAgents, withLock };
 }
