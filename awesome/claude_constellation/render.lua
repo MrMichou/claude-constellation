@@ -848,7 +848,7 @@ function R.write_alerts(state)
   if not state then os.remove(R.CACHE_DIR .. ALERTS_FILE); return true end
   local f = io.open(R.CACHE_DIR .. ALERTS_FILE, "w")
   if not f then return false end
-  f:write(encode({ ok = state.ok == true, error = state.error, auth = state.auth,
+  f:write(encode({ ok = state.ok == true, error = state.error, auth = state.auth, via = state.via,
     fetched = state.fetched or 0, total = state.total or 0, counts = state.counts or {},
     groups = state.groups or {} }))
   f:close()
@@ -858,6 +858,7 @@ function R.read_alerts()
   local d = R.read_json(R.CACHE_DIR .. ALERTS_FILE)
   if type(d) ~= "table" or d.ok == nil then return nil end
   d.ok, d.auth = d.ok == true, d.auth == true
+  d.via = d.via == "desktop" and "desktop" or nil
   d.fetched, d.total = tonumber(d.fetched) or 0, tonumber(d.total) or 0
   d.counts = type(d.counts) == "table" and d.counts or {}
   d.groups = type(d.groups) == "table" and d.groups or {}

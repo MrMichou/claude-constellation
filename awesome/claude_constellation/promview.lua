@@ -18,10 +18,11 @@ P.SEVERITIES = { "critical", "warning", "info" }
 local RANK = { critical = 1, warning = 2, info = 3 }
 
 -- `key = value` lines, `#` comments; `match` may repeat (ANDed label matchers, `team=platform`,
--- `severity!=info`). PROMVIEW_URL overrides the file's url. nil when no url is set: Promview
--- stays off.
+-- `severity!=info`). PROMVIEW_URL overrides the file's url. `desktop` is auto (the default: ask a
+-- running promview-desktop, else poll the url), on (ask the desktop, no url needed) or off (never
+-- ask it). nil when there is neither a url nor `desktop = on`: Promview stays off.
 function P.read_config(path)
-  local cfg = { interval = 30, limit = 200, match = {} }
+  local cfg = { interval = 30, limit = 200, match = {}, desktop = "auto" }
   local f = io.open(path or P.CONFIG_FILE, "r")
   if f then
     for line in f:lines() do
@@ -37,8 +38,10 @@ function P.read_config(path)
   end
   local env = os.getenv("PROMVIEW_URL")
   if env and env ~= "" then cfg.url = env end
-  if not cfg.url or cfg.url == "" then return nil end
-  cfg.url = cfg.url:gsub("/+$", "")
+  if cfg.url == "" then cfg.url = nil end
+  if cfg.desktop ~= "on" and cfg.desktop ~= "off" then cfg.desktop = "auto" end
+  if not cfg.url and cfg.desktop ~= "on" then return nil end
+  if cfg.url then cfg.url = cfg.url:gsub("/+$", "") end
   cfg.interval = math.max(5, cfg.interval)
   cfg.limit = math.max(1, math.min(500, math.floor(cfg.limit)))
   return cfg

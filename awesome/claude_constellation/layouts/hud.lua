@@ -85,7 +85,10 @@ local function board(K, cr, x0, y0, x1, y1, f)
   -- Header: the count per severity, large, and the poll state.
   K.bold(cr, true); K.text(cr, "PROMVIEW", x0, y0 + 14, 12, C.dim, 1); K.bold(cr, false)
   local status, scol
-  if P.auth then status, scol = "sign in needed: run constellation-promview-login", C.permission
+  if P.auth then
+    status = P.via == "desktop" and "sign in needed: sign in from the Promview tray"
+      or "sign in needed: run constellation-promview-login"
+    scol = C.permission
   elseif not P.ok then status, scol = P.error and ("unreachable · " .. P.error) or "connecting…", C.permission
   elseif P.fetched then
     status, scol = "updated " .. K.ago(t, P.fetched) .. (t - P.fetched < 60 and "" or " ago"), C.dim

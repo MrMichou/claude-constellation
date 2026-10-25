@@ -90,6 +90,16 @@ It opens your browser on the Promview sign-in, as the Promview desktop client do
 
 The lock screen shows the same board, alert names and hosts included, so you can see what's firing without unlocking: Awesome keeps polling while the screen is locked and hands each result to the saver through `~/.cache/claude-constellation/promview.json`. A board older than 5 minutes there is shown dimmed. Mind that anyone passing by your screen can read it.
 
+#### Asking promview-desktop instead of polling
+
+If the [Promview desktop client](https://github.com/cropalato/promview/tree/main/desktop) is running (Linux), the HUD asks it for the alerts over the session bus instead of running `curl`: the desktop already holds the alert stream and the signed-in session, so the HUD updates the moment something changes, needs no token of its own, and `constellation-promview-login` is not needed (sign in from the desktop's tray). Nothing to set up when `url` is also in `promview.conf`: the HUD uses the desktop while it runs, and goes back to `curl` when it quits or hasn't started yet, picking it up again when it appears. Without a `url`, add one line to use the desktop alone:
+
+```ini
+desktop = on     # auto (default: the desktop if it runs, else url) | on (desktop only, no url needed) | off (never)
+```
+
+The `match` and `limit` lines apply the same way. While the desktop is pushing changes the poll interval stretches to a slow fallback (at least two minutes). The desktop needs the interface from its version after 0.1.0-beta.4 (`org.promview.Desktop`, read-only); an older client doesn't offer it and the HUD keeps polling.
+
 ## How it works
 
 - `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls, subagents) and deletes the file on `SessionEnd`. Subagents come from `SubagentStart`/`SubagentStop` and from the `agent_id` that tool events carry when a subagent runs them, so their calls never show up as the session's own.
