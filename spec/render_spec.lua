@@ -461,7 +461,7 @@ describe("render.lua", function()
 
     it("lists the layouts, constellation first", function()
       assert.are.same({ "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud",
-        "popup" }, R.LAYOUTS)
+        "popup", "zen", "treemap", "flow", "tree" }, R.LAYOUTS)
     end)
 
     it("kanban, strip, hud and popup put the session that needs you first", function()
@@ -511,6 +511,50 @@ describe("render.lua", function()
       local rec = draw({ layout = "cards" })
       assert.is_true(rec.has_text("5 sessions"))
       assert.is_true(rec.has_text("1 awaiting permission"))
+    end)
+
+    it("zen only spells out the sessions that need you", function()
+      local rec = draw({ layout = "zen" })
+      assert.is_true(rec.has_text("permission now"))
+      assert.is_true(rec.has_text("waiting 4m"))
+      assert.is_true(rec.has_text("api")) -- a small dot with its name
+      assert.is_nil(rec.text_matching("^tool"))
+    end)
+
+    it("treemap sizes sessions by their time in tool calls", function()
+      local rec = draw({ layout = "treemap" })
+      assert.is_truthy(rec.text_matching("^tool · %d+s busy · 2 calls$"))
+      assert.is_true(rec.has_text("done · idle"))
+    end)
+
+    it("flow runs sessions into kinds, and kinds into resources unless private", function()
+      local rec = draw({ layout = "flow" })
+      assert.is_true(rec.has_text("shell"))
+      assert.is_true(rec.has_text("cargo test"))
+      assert.is_true(rec.has_text("…/ci/deploy.yml"))
+      local priv = draw({ layout = "flow", private = true })
+      assert.is_true(priv.has_text("shell"))
+      assert.is_nil(priv.text_matching("ci/deploy"))
+    end)
+
+    it("tree splits a session into its own calls and its subagents", function()
+      H.session(data, "a", {
+        project = "api", state = "thinking",
+        history = { { kind = "shell", target = "cargo test", ts = now } },
+        agents = { x1 = { type = "Explore", label = "scan the repo", state = "tool", kind = "search",
+          target = "TODO", started = now, ts = now,
+          history = { { kind = "search", target = "TODO", ts = now } } } },
+      })
+      R.read_sessions()
+      local rec = draw({ layout = "tree" })
+      assert.is_true(rec.has_text("own calls"))
+      assert.is_true(rec.has_text("scan the repo"))
+      assert.is_true(rec.has_text("TODO"))
+      local priv = draw({ layout = "tree", private = true })
+      assert.is_true(priv.has_text("Explore"))
+      assert.is_true(priv.has_text("search"))
+      assert.is_nil(priv.text_matching("scan the repo"))
+      assert.is_nil(priv.text_matching("TODO"))
     end)
 
     it("resources put a shared file between its sessions", function()

@@ -686,6 +686,10 @@ local function runner_color(r)
   return C.kind.agent
 end
 
+-- A session's subagents as R.runners groups them, and the colour of one, for layouts that
+-- draw them their own way.
+K.runner_list, K.runner_color = R.runners, runner_color
+
 -- Mini Clawds circling session s like a merry-go-round: the ring turns at the pace of its
 -- busiest runner and each runner eases into an evenly spaced slot. A runner that stands still
 -- (permission, done) falls behind the ring, then catches up running once it moves again.
@@ -783,7 +787,8 @@ end
 -- { t, ta (animation clock, frozen while static), static, private, list (sessions), links, gen,
 -- alerts (Promview, see R.set_alerts), area (the screen's workarea {x, y, w, h}: what the bars
 -- leave, nil for the whole frame) }.
-R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud", "popup" }
+R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud", "popup",
+  "zen", "treemap", "flow", "tree" }
 local layouts = {}
 for _, name in ipairs(R.LAYOUTS) do layouts[name] = dofile(DIR .. "layouts/" .. name .. ".lua") end
 

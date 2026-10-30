@@ -6,6 +6,9 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+### Added
+- **Four layouts**: `zen` (a dot per session in a corner, only the sessions that need you spelled out), `treemap` (tiles sized by time in tool calls over 30 min, split by kind), `flow` (Sankey diagram sessions → kinds → resources) and `tree` (icicle chart session → own calls and subagents → targets).
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

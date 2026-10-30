@@ -4,7 +4,8 @@
 -- Usage: demo/record.sh (wraps this script and encodes the GIFs with ffmpeg).
 --   lua5.4 demo/record.lua <out_dir> <wallpaper|lock|layouts|promview> <width> <height> <fps> <seconds>
 --     [scenario]
--- "layouts" cycles through every layout (R.LAYOUTS), an equal share of the time each.
+-- "layouts" cycles through every layout (R.LAYOUTS), an equal share of the time each;
+-- "layout:<name>" shows that one only.
 -- "promview" is the hud layout with a board of made-up Promview alerts, under a 36px bar.
 -- Scenarios: "sessions" (default, four everyday sessions) and "workflow" (a big multi-agent
 -- workflow fanning out to ~30 subagents, to show runners being grouped and ungrouped).
@@ -290,6 +291,7 @@ end
 local surface = cairo.ImageSurface.create(cairo.Format.RGB24, W, H)
 local opts = { private = MODE == "lock" }
 if MODE == "promview" then opts.layout, opts.area = "hud", { x = 0, y = 36, w = W, h = H - 36 } end
+opts.layout = MODE:match("^layout:(.+)$") or opts.layout
 local layout_time = SECONDS / #R.LAYOUTS
 local PREROLL = 2 -- seconds rendered but not saved, so nodes have faded in and settled
 local frames, next_ev = math.floor(SECONDS * FPS), 1

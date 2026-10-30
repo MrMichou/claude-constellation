@@ -32,7 +32,16 @@ Five more put the sessions that need you first:
 - **hud**: a compact column on the right edge, to stay visible beside your windows. With [Promview](#promview-alerts-in-the-hud) set up, the rest of the desktop becomes a board of its firing alerts, behind your windows.
 - **popup**: the session list as a key binding would show it over your windows (display only for now).
 
-Kanban, strip, hud and popup sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
+Four more show where the work goes:
+
+![zen, treemap, flow and tree](docs/layouts-work.png)
+
+- **zen**: almost nothing, one small dot per session in the bottom-right corner, breathing while it works. Only a session that needs you grows into a Clawd with its name and how long it has been waiting.
+- **treemap**: each session's tile is as big as the time it spent in tool calls over the last 30 minutes, split by kind: who works the most, and on what.
+- **flow**: a Sankey diagram of the last 30 minutes, sessions feeding the kinds of tool they called (band width = number of calls), and each kind feeding the resources it touched. A pulse runs along the band of each running call.
+- **tree**: an icicle chart read left to right, each session split into its own calls and its subagents, each split into the targets they last touched.
+
+Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
 
 ### Switching layouts
 
@@ -41,7 +50,8 @@ From a terminal, or any script:
 ```sh
 constellation-layout            # next layout (same as `next`)
 constellation-layout prev
-constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
+constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup,
+                                # zen, treemap, flow, tree
 ```
 
 `install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
