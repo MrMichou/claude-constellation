@@ -41,6 +41,27 @@ Four more show where the work goes:
 
 Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
 
+### Settings menu
+
+```sh
+constellation-menu
+```
+
+One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
+
+```
+  ✦ Claude constellation
+
+    Display     ‹ on ›                    drawn on the desktop
+  ▸ Layout      ‹ kanban ›         5/13   columns Needs you / Working / Done / Asleep
+    Eco mode    ‹ auto ›           1/3    on while on battery (off now)
+    Rendering   ‹ auto ›           1/3    the GPU if there is one (in use: gpu)
+    Promview    Poll now                  https://promview.example · desktop auto
+                Sign in…                  OIDC sign-in in your browser
+    Lock screen Lock now                  xsecurelock on the constellation
+                Quit
+```
+
 ### Switching layouts
 
 From a terminal, or any script:
@@ -52,7 +73,7 @@ constellation-layout kanban     # constellation, lanes, cards, resources, kanban
                                 # zen, treemap, flow, tree
 ```
 
-`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-menu`, and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 

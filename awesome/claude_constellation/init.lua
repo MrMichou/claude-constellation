@@ -347,6 +347,7 @@ end
 
 return {
   set_layout = set_layout,
+  layout = function() return layout end,
   set_eco = set_eco,
   eco = function() return eco_choice, eco end,
   layouts = R.LAYOUTS,

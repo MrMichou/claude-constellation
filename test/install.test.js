@@ -80,7 +80,7 @@ describe("install.js", () => {
 
   const cmdLink = (name = "constellation-layout") => path.join(h.home, ".local", "bin", name);
 
-  it.each(["constellation-layout", "constellation-eco"])(
+  it.each(["constellation-layout", "constellation-eco", "constellation-menu"])(
     "links the %s command into ~/.local/bin, and removes it", async (name) => {
       await install();
       await install(); // idempotent

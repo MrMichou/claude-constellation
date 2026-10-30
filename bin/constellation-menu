@@ -1,0 +1,216 @@
+#!/usr/bin/env node
+// Terminal menu for every claude-constellation setting of the running AwesomeWM: the layer on/off,
+// the layout, eco mode, the render backend, Promview (poll now, sign in) and the lock screen.
+// Usage: constellation-menu
+//
+// Keys: up/down (or k/j) pick a line, left/right (or h/l) change its value, which applies at once
+// so the wallpaper previews it; enter runs an action (or steps a value); q or esc quits.
+// Talks to Awesome through awesome-client, like constellation-layout and constellation-eco.
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawn, spawnSync } = require("child_process");
+
+if (process.argv[2] === "-h" || process.argv[2] === "--help") {
+  console.log("Terminal menu for every claude-constellation setting.\nUsage: constellation-menu");
+  process.exit(0);
+}
+
+const LAYOUT_HELP = {
+  constellation: "glowing nodes, their resources in orbit",
+  lanes: "one lane per session, its tool calls over 20 min",
+  cards: "a grid of cards and a summary tile",
+  resources: "files, commands and tmux in the middle, sessions around",
+  kanban: "columns Needs you / Working / Done / Asleep",
+  radar: "the last 30 min as a clock face, the most urgent in the middle",
+  strip: "a band across the top, one chip per session",
+  hud: "a column on the right edge (and the Promview board)",
+  popup: "the session list as a key binding would show it",
+  zen: "one dot per session; only who needs you is spelled out",
+  treemap: "tiles sized by time in tool calls over 30 min",
+  flow: "Sankey: sessions -> kinds of tool -> resources",
+  tree: "icicle: session -> calls and subagents -> targets",
+};
+const ECO_HELP = { auto: "on while on battery", on: "nothing moves, 1 frame/s", off: "full animation" };
+const BACKEND_HELP = { auto: "the GPU if there is one", gpu: "draw on the X surface", cpu: "draw in memory, one paint" };
+
+// --- Awesome --------------------------------------------------------------------------------
+
+// Runs `action` (Lua, may be empty) in Awesome, then answers the state in one round trip.
+const STATE = `
+  local e, eon = cc.eco and cc.eco()
+  local b, bnow = cc.backend and cc.backend()
+  -- an unknown name leaves the layout alone and returns it (modules without cc.layout)
+  local l = cc.layout and cc.layout() or cc.set_layout('?')
+  return table.concat({ l, tostring(cc.is_off and cc.is_off() or false), tostring(e or ''),
+    tostring(eon or false), tostring(b or ''), tostring(bnow or ''), table.concat(cc.layouts or {}, ',') }, '|')`;
+
+function awesome(action) {
+  const lua = `local ok, cc = pcall(require, 'ui.desktop.claude_constellation')
+  if not ok or not cc.set_layout then return 'error: module not loaded' end
+  ${action || ""}
+  ${STATE}`;
+  const r = spawnSync("awesome-client", [lua], { encoding: "utf8" });
+  if (r.error) throw new Error(`awesome-client: ${r.error.code === "ENOENT" ? "not found" : r.error.message}`);
+  // awesome-client prints e.g.:   string "kanban|false|auto|false|auto|gpu|constellation,lanes"
+  const m = (r.stdout || "").match(/string "(.*)"/);
+  if (!m) throw new Error("no answer from awesome-client");
+  if (m[1].startsWith("error:")) throw new Error(m[1].slice(7));
+  const [layout, off, eco, ecoOn, backend, backendNow, layouts] = m[1].split("|");
+  return {
+    layout, off: off === "true", eco, ecoOn: ecoOn === "true", backend, backendNow,
+    layouts: layouts ? layouts.split(",") : Object.keys(LAYOUT_HELP),
+  };
+}
+
+function promviewConf() {
+  const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  let text = "";
+  try { text = fs.readFileSync(path.join(dir, "claude-constellation", "promview.conf"), "utf8"); } catch {}
+  const conf = { url: process.env.PROMVIEW_URL || "", desktop: "auto" };
+  for (const line of text.split("\n")) {
+    const m = line.replace(/#.*/, "").match(/^\s*(url|desktop)\s*=\s*(.*?)\s*$/);
+    if (m && !(m[1] === "url" && process.env.PROMVIEW_URL)) conf[m[1]] = m[2].replace(/^"(.*)"$/, "$1");
+  }
+  return conf;
+}
+
+// --- Menu -----------------------------------------------------------------------------------
+
+const lua = (s) => `'${s.replace(/[\\']/g, "\\$&")}'`;
+let state;
+let conf = promviewConf();
+let row = 0;
+let message = "";
+
+// A choice line steps through `options` with left/right; an action line runs on enter.
+const ROWS = [
+  { label: "Display", options: () => ["on", "off"], value: () => (state.off ? "off" : "on"),
+    apply: (v) => `cc.set_off(${lua(v)})`, hint: (v) => (v === "off" ? "hidden, no redraws" : "drawn on the desktop") },
+  { label: "Layout", options: () => state.layouts, value: () => state.layout,
+    apply: (v) => `cc.set_layout(${lua(v)})`, hint: (v) => LAYOUT_HELP[v] || "" },
+  { label: "Eco mode", options: () => ["auto", "on", "off"], value: () => state.eco,
+    apply: (v) => `cc.set_eco(${lua(v)})`,
+    hint: (v) => ECO_HELP[v] + (v === "auto" ? (state.ecoOn ? " (on now)" : " (off now)") : "") },
+  { label: "Rendering", options: () => ["auto", "gpu", "cpu"], value: () => state.backend,
+    apply: (v) => `cc.set_backend(${lua(v)})`,
+    hint: (v) => BACKEND_HELP[v] + (state.backendNow ? ` (in use: ${state.backendNow})` : "") },
+  { label: "Promview", action: "Poll now",
+    hint: () => (conf.url ? conf.url : "no url") + ` · desktop ${conf.desktop}`,
+    run: () => { conf = promviewConf(); act("if cc.promview_refresh then cc.promview_refresh() end", "Polled Promview"); } },
+  { label: "", action: "Sign in…", hint: () => (conf.url ? "OIDC sign-in in your browser" : "set url in promview.conf first"),
+    run: signIn },
+  { label: "Lock screen", action: "Lock now", hint: () => "xsecurelock on the constellation",
+    run: () => { act("cc.lock()", "Locked"); quit(); } },
+  { label: "", action: "Quit", hint: () => "", run: () => quit() },
+];
+
+const tty = process.stdout.isTTY;
+const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
+const pad = (s, n) => s + " ".repeat(Math.max(0, n - [...s].length));
+
+function draw() {
+  const lines = ["", `  ${c("1;38;5;111", "✦ Claude constellation")}`, ""];
+  ROWS.forEach((r, i) => {
+    const sel = i === row;
+    const cursor = sel ? c("38;5;111", "▸") : " ";
+    let value;
+    if (r.options) {
+      const opts = r.options(), v = r.value();
+      const pos = c("2", pad(opts.length > 2 ? `${opts.indexOf(v) + 1}/${opts.length}` : "", 7));
+      value = pad(`‹ ${v} ›`, 19);
+      lines.push(`  ${cursor} ${pad(r.label, 12)}${sel ? c("1;38;5;111", value) : value}${pos}${c("2", r.hint(v))}`);
+    } else {
+      value = pad(r.action, 19);
+      lines.push(`  ${cursor} ${pad(r.label, 12)}${sel ? c("1;38;5;111", value) : value}       ${c("2", r.hint())}`);
+    }
+  });
+  lines.push("", c("2", "  ↑↓ choose   ←→ change   ⏎ apply   q quit"), "", message ? `  ${message}` : "");
+  if (tty) process.stdout.write("\x1b[H\x1b[2J" + lines.join("\n"));
+}
+
+function act(action, done) {
+  try {
+    state = awesome(action);
+    message = done ? c("38;5;114", done) : "";
+  } catch (err) {
+    message = c("38;5;203", err.message);
+  }
+}
+
+function step(dir) {
+  const r = ROWS[row];
+  if (!r.options) return;
+  const opts = r.options();
+  const v = opts[(opts.indexOf(r.value()) + dir + opts.length) % opts.length];
+  act(r.apply(v), `${r.label}: ${v}`);
+}
+
+function screen(on) {
+  if (!tty) return;
+  process.stdout.write(on ? "\x1b[?1049h\x1b[?25l" : "\x1b[?25h\x1b[?1049l");
+}
+
+function rawMode(on) {
+  if (process.stdin.isTTY) process.stdin.setRawMode(on);
+}
+
+let quitting = false;
+function quit() {
+  quitting = true;
+  rawMode(false);
+  screen(false);
+  process.exit(0);
+}
+
+let paused = false;
+function signIn() {
+  if (!conf.url && !promviewConf().url) { message = c("38;5;221", "No Promview url: set url = … in promview.conf"); return; }
+  const login = path.join(path.dirname(fs.realpathSync(__filename)), "constellation-promview-login");
+  paused = true;
+  rawMode(false);
+  screen(false);
+  process.stdin.pause();
+  const child = spawn(login, [], { stdio: "inherit" });
+  child.on("close", (code) => {
+    paused = false;
+    message = code === 0 ? c("38;5;114", "Signed in to Promview") : c("38;5;203", `Sign-in failed (${code})`);
+    conf = promviewConf();
+    rawMode(true);
+    screen(true);
+    process.stdin.resume();
+    draw();
+  });
+}
+
+function key(k) {
+  if (paused) return;
+  message = "";
+  if (k === "\x1b[A" || k === "k") row = (row + ROWS.length - 1) % ROWS.length;
+  else if (k === "\x1b[B" || k === "j" || k === "\t") row = (row + 1) % ROWS.length;
+  else if (k === "\x1b[D" || k === "h") step(-1);
+  else if (k === "\x1b[C" || k === "l" || k === " ") step(1);
+  else if (k === "\r" || k === "\n") ROWS[row].run ? ROWS[row].run() : step(1);
+  else if (k === "q" || k === "\x1b" || k === "\x03") quit();
+  else if (/^[1-9]$/.test(k) && +k <= ROWS.length) row = +k - 1;
+  if (!quitting && !paused) draw();
+}
+
+try {
+  state = awesome("");
+} catch (err) {
+  console.error(`constellation-menu: ${err.message}`);
+  process.exit(1);
+}
+screen(true);
+rawMode(true);
+process.on("exit", () => { if (!quitting) { rawMode(false); screen(false); } });
+process.stdout.on("resize", draw);
+draw();
+process.stdin.setEncoding("utf8");
+// A paste or a pipe may bring several keys at once: split escape sequences from single keys.
+process.stdin.on("data", (chunk) => {
+  for (const k of chunk.match(/\x1b\[[A-D]|\x1b|[\s\S]/g) || []) key(k);
+});
+process.stdin.on("end", () => { if (!paused) quit(); });
