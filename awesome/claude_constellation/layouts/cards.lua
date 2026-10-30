@@ -1,10 +1,9 @@
 -- Cards: one card per session in a grid (state, running tool, last targets), plus a summary
 -- tile when a slot is free. Stays readable with many sessions.
 
-return function(K, cr, w, h, f)
-  local C, t = K.C, f.t
-  local n = #f.list
-  if n == 0 then return end
+-- The grid: card width and height, the number of tiles (a summary in a free slot) and slot(i),
+-- the top-left corner of tile i.
+local function grid(w, h, n)
   local cols = n == 1 and 1 or n <= 4 and 2 or n <= 9 and 3 or 4
   local tiles = n + ((n > 1 and n % cols ~= 0) and 1 or 0) -- summary in a free slot
   local rows = math.ceil(tiles / cols)
@@ -16,19 +15,26 @@ return function(K, cr, w, h, f)
   local function slot(i)
     return gx + ((i - 1) % cols) * (cw + gap), gy + math.floor((i - 1) / cols) * (ch + gap)
   end
+  return cw, ch, tiles, slot
+end
 
+local function node_size(ch) return math.min(72, ch * 0.28) end
+
+-- Everything but the nodes: it only changes with the sessions (see K.layer).
+local function still(K, cr, w, h, f)
+  local C, t = K.C, f.t
+  local n = #f.list
+  local cw, ch, tiles, slot = grid(w, h, n)
   for i, s in ipairs(f.list) do
     local x, y = slot(i)
     local A, col = s.alpha, K.node_color(s)
-    local size = math.min(72, ch * 0.28)
-    local hx, hy = x + 20 + size / 2, y + 16 + size / 2 -- node centre in the header
+    local size = node_size(ch)
+    local hy = y + 16 + size / 2 -- node centre height, in the header
     K.set(cr, C.fg, 0.05 * A); K.rrect(cr, x, y, cw, ch, 14); cr:fill()
     K.set(cr, col, 0.9 * A); cr:set_line_width(s.state == "permission" and 3 or 1.5)
     K.rrect(cr, x, y, cw, ch, 14); cr:stroke()
 
-    K.place(s, hx, hy, f, 0.2)
     cr:save(); K.rrect(cr, x, y, cw, ch, 14); cr:clip()
-    K.node(cr, s, i, s.x, s.y, f, size)
     local tx = x + 40 + size
     K.bold(cr, true); K.text(cr, K.name(s), tx, hy - 4, 16, C.fg, A); K.bold(cr, false)
     K.text(cr, K.sub(s, f.private), tx, hy + 16, 12, col, A)
@@ -80,6 +86,21 @@ return function(K, cr, w, h, f)
       K.text(cr, "⇄ " .. #f.links .. " shared resource" .. (#f.links > 1 and "s" or ""),
         x + 24, y + ch - 24, 12, C.dim, 1)
     end
+    cr:restore()
+  end
+end
+
+return function(K, cr, w, h, f)
+  local n = #f.list
+  if n == 0 then return end
+  K.layer(cr, w, h, f, "cards", function(lc) still(K, lc, w, h, f) end)
+  local cw, ch, _, slot = grid(w, h, n)
+  local size = node_size(ch)
+  for i, s in ipairs(f.list) do
+    local x, y = slot(i)
+    K.place(s, x + 20 + size / 2, y + 16 + size / 2, f, 0.2)
+    cr:save(); K.rrect(cr, x, y, cw, ch, 14); cr:clip()
+    K.node(cr, s, i, s.x, s.y, f, size)
     cr:restore()
   end
 end

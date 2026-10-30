@@ -115,7 +115,8 @@ end
 -- While static (on battery) only the emotes move, so it stays at the idle rate; in eco mode
 -- nothing moves and a frame a second follows the sessions.
 -- With no session, the layer hidden or covered by a window, nothing moves: no redraws at all.
-local user_hidden = false
+-- Switched off (set_off), the layer is hidden and the sessions aren't even read.
+local off = R.read_off()
 local function redraw() canvas:emit_signal("widget::redraw_needed") end
 local anim = gears.timer {
   timeout = 1 / R.FPS_IDLE,
@@ -123,32 +124,56 @@ local anim = gears.timer {
   callback = redraw,
 }
 
-gears.timer {
-  timeout = 1,
-  autostart = true,
-  call_now = true,
-  callback = function()
-    local active, count = R.read_sessions()
-    backend = resolve_backend()
-    local battery = R.on_battery()
-    eco = R.eco_active(eco_choice, battery)
-    static = eco or (battery and ON_BATTERY == "static")
-    local visible = not user_hidden and not (battery and ON_BATTERY == "off")
-    if box then box.visible = visible end
+local function tick()
+  if off then
+    if box then box.visible = false end
+    if anim.started then anim:stop() end
+    return
+  end
+  local active, count = R.read_sessions()
+  active = active or R.fx_playing() -- a session popping in, a permission, confetti
+  backend = resolve_backend()
+  local battery = R.on_battery()
+  eco = R.eco_active(eco_choice, battery)
+  static = eco or (battery and ON_BATTERY == "static")
+  local visible = not (battery and ON_BATTERY == "off")
+  if box then box.visible = visible end
 
-    local alerts_shown = layout == "hud" and R.alerts() ~= nil
-    if not visible or (count == 0 and not alerts_shown) then
-      if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
-      return
-    end
-    if box and covered(box.screen) then
-      if anim.started then anim:stop() end -- the last frame stays, behind the window
-      return
-    end
-    local want = 1 / (eco and R.FPS_ECO or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
-    if anim.timeout ~= want or not anim.started then anim.timeout = want; anim:again() end
-  end,
-}
+  local alerts_shown = layout == "hud" and R.alerts() ~= nil
+  if not visible or (count == 0 and not alerts_shown) then
+    if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
+    return
+  end
+  if box and covered(box.screen) then
+    if anim.started then anim:stop() end -- the last frame stays, behind the window
+    return
+  end
+  local want = 1 / (eco and R.FPS_ECO or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
+  if anim.timeout ~= want or not anim.started then anim.timeout = want; anim:again() end
+end
+gears.timer { timeout = 1, autostart = true, call_now = true, callback = tick }
+
+local function notify(text)
+  local ok, naughty = pcall(require, "naughty")
+  if ok then naughty.notify({ title = "Claude constellation", text = text, timeout = 2 }) end
+end
+
+-- Switch the layer off ("off"), back on ("on"), or "toggle". Off hides it and stops all
+-- work until switched on again, across restarts. Returns true while off.
+local function set_off(want)
+  if want == "toggle" then want = not off
+  elseif want == "off" or want == true then want = true
+  elseif want == "on" or want == false then want = false
+  else return off end
+  if want ~= off then
+    off = want
+    R.write_off(off)
+    tick()
+    if not off then redraw() end
+    notify(off and "Off" or ("On: " .. layout))
+  end
+  return off
+end
 
 -- Promview alerts for the HUD, only while the HUD is the layout and the layer is shown. Asked of a
 -- running promview-desktop over the session bus when there is one (it pushes AlertsChanged, so the
@@ -268,7 +293,8 @@ local function lock()
 end
 
 -- Switch the presentation: a layout name, or "next" / "prev" to cycle through R.LAYOUTS.
--- The choice is kept for the next start and for the lock screen. Returns the layout shown.
+-- The choice is kept for the next start and for the lock screen; picking one while the layer
+-- is off switches it back on. Returns the layout shown.
 local function set_layout(name)
   local list, i = R.LAYOUTS, 1
   for j, l in ipairs(list) do if l == layout then i = j end end
@@ -279,10 +305,10 @@ local function set_layout(name)
   if not known then return layout end
   layout = name
   R.write_layout(name)
+  if off then off = false; R.write_off(false); tick() end
   if os.time() - promview_last > 5 then promview_poll() end
-  canvas:emit_signal("widget::redraw_needed")
-  local ok, naughty = pcall(require, "naughty")
-  if ok then naughty.notify({ title = "Claude constellation", text = "Layout: " .. name, timeout = 2 }) end
+  redraw()
+  notify("Layout: " .. name)
   return layout
 end
 
@@ -295,12 +321,8 @@ local function set_backend(name)
     backend_choice, gpu_failed = name, false
     backend = resolve_backend()
     R.write_backend(name)
-    canvas:emit_signal("widget::redraw_needed")
-    local ok, naughty = pcall(require, "naughty")
-    if ok then
-      naughty.notify({ title = "Claude constellation",
-        text = "Rendering: " .. name .. " (" .. backend .. ")", timeout = 2 })
-    end
+    redraw()
+    notify("Rendering: " .. name .. " (" .. backend .. ")")
   end
   return backend_choice, backend
 end
@@ -315,12 +337,10 @@ local function set_eco(name)
     eco_choice = name
     eco = R.eco_active(name, R.on_battery())
     R.write_eco(name)
+    tick() -- picks the new frame rate now rather than at the next second
     redraw()
-    local ok, naughty = pcall(require, "naughty")
-    if ok then
-      local now = name == "auto" and (eco and " (on: on battery)" or " (off: on mains)") or ""
-      naughty.notify({ title = "Claude constellation", text = "Eco mode: " .. name .. now, timeout = 2 })
-    end
+    local now = name == "auto" and (eco and " (on: on battery)" or " (off: on mains)") or ""
+    notify("Eco mode: " .. name .. now)
   end
   return eco_choice, eco
 end
@@ -348,8 +368,7 @@ return {
     promview_pace()
     promview_poll()
   end,
-  toggle = function()
-    user_hidden = not user_hidden
-    if box then box.visible = not user_hidden end
-  end,
+  set_off = set_off,
+  is_off = function() return off end,
+  toggle = function() return set_off("toggle") end,
 }
