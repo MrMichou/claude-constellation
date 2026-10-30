@@ -4,12 +4,15 @@
 local WINDOW = 20 * 60
 local KINDS = { "file", "shell", "search", "web", "agent", "mcp" }
 
-return function(K, cr, w, h, f)
+local TOP, BOTTOM = 40, 60
+
+local function lane_height(h, n) return math.min(110, (h - TOP - BOTTOM) / n) end
+
+-- Everything but the nodes: it only changes with the sessions (see K.layer).
+local function still(K, cr, w, h, f)
   local C, t = K.C, f.t
   local n = #f.list
-  if n == 0 then return end
-  local top, bottom = 40, 60
-  local lane = math.min(110, (h - top - bottom) / n)
+  local top, lane = TOP, lane_height(h, n)
   local x0, x1 = math.max(300, w * 0.2), w - 40
   local function x_at(ts) return x1 - (t - ts) / WINDOW * (x1 - x0) end
 
@@ -28,8 +31,6 @@ return function(K, cr, w, h, f)
     local cy = y + lane / 2
     K.set(cr, C.fg, 0.04 * A); K.rrect(cr, 20, y + 4, w - 40, lane - 8, 10); cr:fill()
 
-    K.place(s, 70, cy, f, 0.2)
-    K.node(cr, s, i, s.x, s.y, f, math.min(56, lane * 0.6))
     cr:save(); cr:rectangle(0, y, x0 - 10, lane); cr:clip() -- long names stop at the timeline
     K.bold(cr, true); K.text(cr, K.name(s), 110, cy - 3, 14, C.fg, A); K.bold(cr, false)
     K.text(cr, K.sub(s, f.private), 110, cy + 15, 11, col, 0.9 * A)
@@ -72,5 +73,16 @@ return function(K, cr, w, h, f)
     K.set(cr, K.kind_color(k)); K.rrect(cr, lx, ly, 12, 12, 3); cr:fill()
     K.text(cr, k, lx + 18, ly + 10, 11, C.dim, 1)
     lx = lx + 36 + K.text_width(cr, k, 11)
+  end
+end
+
+return function(K, cr, w, h, f)
+  local n = #f.list
+  if n == 0 then return end
+  K.layer(cr, w, h, f, "lanes", function(lc) still(K, lc, w, h, f) end)
+  local lane = lane_height(h, n)
+  for i, s in ipairs(f.list) do
+    K.place(s, 70, TOP + (i - 1) * lane + lane / 2, f, 0.2)
+    K.node(cr, s, i, s.x, s.y, f, math.min(56, lane * 0.6))
   end
 end

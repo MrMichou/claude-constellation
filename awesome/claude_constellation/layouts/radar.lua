@@ -4,13 +4,17 @@
 
 local WINDOW = 30 * 60 -- the hook keeps a 30-minute timeline
 
-return function(K, cr, w, h, f)
+-- Centre and inner/outer ring radii.
+local function geometry(w, h)
+  local size = math.min(w, h)
+  return w / 2, h / 2 + 10, size * 0.14, size * 0.43
+end
+
+-- Everything but the middle node: it only changes with the sessions (see K.layer).
+local function still(K, cr, w, h, f, top)
   local C, t = K.C, f.t
   local n = #f.list
-  if n == 0 then return end
-  local cx, cy = w / 2, h / 2 + 10
-  local size = math.min(w, h)
-  local r0, r1 = size * 0.14, size * 0.43
+  local cx, cy, r0, r1 = geometry(w, h)
   local step = n > 1 and (r1 - r0) / (n - 1) or 0
   local band = math.max(4, math.min(12, step * 0.35))
   local function ang(ts) return -math.pi / 2 - (t - ts) / WINDOW * 2 * math.pi end
@@ -61,13 +65,19 @@ return function(K, cr, w, h, f)
   end
   K.bold(cr, false)
 
-  -- The most urgent session in the middle.
-  local top = K.by_urgency(f.list)[1]
-  K.place(top, cx, cy, f, 0.2)
-  K.node(cr, top, 1, top.x, top.y, f, math.min(72, r0 * 0.9))
   local u = K.urgency(top)
   local line = u <= 2 and (K.name(top) .. " needs you") or u == 3 and "working" or "all quiet"
   K.bold(cr, true)
   K.text(cr, line, cx, cy + r0 * 0.75, 12, u <= 2 and C.permission or C.dim, 1, true)
   K.bold(cr, false)
+end
+
+return function(K, cr, w, h, f)
+  if #f.list == 0 then return end
+  -- The most urgent session in the middle.
+  local top = K.by_urgency(f.list)[1]
+  K.layer(cr, w, h, f, "radar", function(lc) still(K, lc, w, h, f, top) end)
+  local cx, cy, r0 = geometry(w, h)
+  K.place(top, cx, cy, f, 0.2)
+  K.node(cr, top, 1, top.x, top.y, f, math.min(72, r0 * 0.9))
 end

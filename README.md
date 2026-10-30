@@ -32,7 +32,35 @@ Five more put the sessions that need you first:
 - **hud**: a compact column on the right edge, to stay visible beside your windows. With [Promview](#promview-alerts-in-the-hud) set up, the rest of the desktop becomes a board of its firing alerts, behind your windows.
 - **popup**: the session list as a key binding would show it over your windows (display only for now).
 
-Kanban, strip, hud and popup sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
+Four more show where the work goes:
+
+- **zen**: almost nothing, one small dot per session in the bottom-right corner, breathing while it works. Only a session that needs you grows into a Clawd with its name and how long it has been waiting.
+- **treemap**: each session's tile is as big as the time it spent in tool calls over the last 30 minutes, split by kind: who works the most, and on what.
+- **flow**: a Sankey diagram of the last 30 minutes, sessions feeding the kinds of tool they called (band width = number of calls), and each kind feeding the resources it touched. A pulse runs along the band of each running call.
+- **tree**: an icicle chart read left to right, each session split into its own calls and its subagents, each split into the targets they last touched.
+
+Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
+
+### Settings menu
+
+```sh
+constellation-menu
+```
+
+One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
+
+```
+  ✦ Claude constellation
+
+    Display     ‹ on ›                    drawn on the desktop
+  ▸ Layout      ‹ kanban ›         5/13   columns Needs you / Working / Done / Asleep
+    Eco mode    ‹ auto ›           1/3    on while on battery (off now)
+    Rendering   ‹ auto ›           1/3    the GPU if there is one (in use: gpu)
+    Promview    Poll now                  https://promview.example · desktop auto
+                Sign in…                  OIDC sign-in in your browser
+    Lock screen Lock now                  xsecurelock on the constellation
+                Quit
+```
 
 ### Switching layouts
 
@@ -41,10 +69,11 @@ From a terminal, or any script:
 ```sh
 constellation-layout            # next layout (same as `next`)
 constellation-layout prev
-constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup
+constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup,
+                                # zen, treemap, flow, tree
 ```
 
-`install.js` links the command (and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
+`install.js` links the command (and `constellation-menu`, and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
 
 From a key binding, e.g. in your global keys:
 
@@ -58,6 +87,23 @@ end, { description = "Next Claude constellation layout", group = "awesome" })
 The `pcall` keeps the key harmless if the module isn't installed. Check the key is free first: in Awesome's default `rc.lua`, **Mod+Shift+C closes the focused window**.
 
 The choice is kept in `~/.cache/claude-constellation/layout`, survives restarts, and also applies to the lock screen, where every layout hides paths and commands.
+
+### Switching it off
+
+```sh
+constellation-layout off      # hide the layer; no redraws, sessions aren't even read
+constellation-layout on       # back on, with the last layout
+constellation-layout toggle
+```
+
+Off survives restarts (`~/.cache/claude-constellation/off`); picking a layout switches it back on. The lock screen still shows the constellation. As a key binding:
+
+```lua
+awful.key({ modkey, "Control" }, "c", function()
+  local ok, cc = pcall(require, "ui.desktop.claude_constellation")
+  if ok and cc.set_off then cc.set_off("toggle") end
+end, { description = "Switch Claude constellation off/on", group = "awesome" })
+```
 
 ### Promview alerts in the HUD
 
@@ -104,7 +150,7 @@ The `match` and `limit` lines apply the same way. While the desktop is pushing c
 
 - `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls, subagents) and deletes the file on `SessionEnd`. Subagents come from `SubagentStart`/`SubagentStop` and from the `agent_id` that tool events carry when a subagent runs them, so their calls never show up as the session's own.
 - **Sessions already open**: `render.lua` also reads Claude Code's internal registry (`~/.claude/sessions/<pid>.json`) to show, idle, live sessions that have no hook file yet (opened before the install, or with no activity). The process must exist and its start time must match. Undocumented format: at worst these sessions don't show up, and the hooks stay the main source.
-- `awesome/claude_constellation/` is the Lua module: `render.lua` reads the sessions and draws them (cairo, no Awesome dependency) through one of the `layouts/`, `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 30 fps while a session is working, 8 fps otherwise.
+- `awesome/claude_constellation/` is the Lua module: `render.lua` reads the sessions and draws them (cairo, no Awesome dependency) through one of the `layouts/`, `init.lua` hooks it into Awesome, `saver.lua` animates it on the lock screen. It creates a `type = "desktop"` wibox below all windows on the primary screen and draws with Cairo. It runs at 20 fps while a session is working, 8 fps otherwise.
 - **GPU or CPU**: by default (`auto`) it renders on the GPU whenever one is found (a graphics driver other than a firmware framebuffer or virtual display bound to `/sys/class/drm/cardN`): it draws straight onto the X surface, which the X server renders with the driver, and keeps the cached glows and Clawd frames as X pixmaps in video memory. Without a GPU it draws into an in-memory image (pixman) and copies the frame in one paint. The check runs every second, so it follows a GPU that appears or goes away; a GPU frame that fails switches to the CPU for the rest of the session. To force one (remembered, and used by the lock screen too):
 
   ```sh
