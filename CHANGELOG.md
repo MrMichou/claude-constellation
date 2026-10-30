@@ -6,6 +6,8 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
 ### Added
 - **Four layouts**: `zen` (a dot per session in a corner, only the sessions that need you spelled out), `treemap` (tiles sized by time in tool calls over 30 min, split by kind), `flow` (Sankey diagram sessions → kinds → resources) and `tree` (icicle chart session → own calls and subagents → targets) (#15, #16).
 - **Event effects** on every layout: a new session pops in with a ring, a permission request sends two shock waves out of the node, and a turn that ends after real work throws confetti (not after a wait or from idle). The layer redraws at full rate while one plays; nothing plays while static or in eco mode (#16).
