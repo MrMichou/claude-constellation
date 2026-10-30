@@ -399,6 +399,71 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("event effects", function()
+    local real_time, clock
+    before_each(function()
+      real_time, clock = GLib.get_real_time, os.time()
+      GLib.get_real_time = function() return clock * 1e6 end
+    end)
+    after_each(function() GLib.get_real_time = real_time end)
+
+    -- Rings around the nodes: the only arcs wider than a satellite dot or a star.
+    local function rings(opts)
+      local n = 0
+      for _, a in ipairs(draw(opts).arcs) do if a.r > 15 then n = n + 1 end end
+      return n
+    end
+
+    local function state(st)
+      H.session(data, "a", { state = st, ts = clock })
+      R.read_sessions()
+    end
+
+    it("pops a new session in with a ring, for under a second", function()
+      state("idle")
+      assert.is_true(R.fx_playing())
+      assert.is_true(rings() > 0)
+      clock = clock + 1
+      R.read_sessions()
+      assert.is_false(R.fx_playing())
+      assert.are.equal(0, rings())
+    end)
+
+    it("sends shock waves on a permission request", function()
+      state("thinking")
+      clock = clock + 2
+      state("tool")
+      assert.is_false(R.fx_playing())
+      state("permission")
+      assert.is_true(R.fx_playing())
+      clock = clock + 0.5
+      assert.is_true(rings() > 0)
+      clock = clock + 2
+      assert.is_false(R.fx_playing())
+    end)
+
+    it("throws confetti when a turn ends after work, not from waiting or idle", function()
+      state("waiting")
+      clock = clock + 2
+      state("done")
+      assert.is_false(R.fx_playing())
+      state("thinking")
+      state("done")
+      assert.is_true(R.fx_playing())
+      local cr = H.recorder()
+      local pieces = 0
+      function cr.rectangle() pieces = pieces + 1 end
+      clock = clock + 0.5
+      R.draw(cr, 1920, 1080, {})
+      assert.is_true(pieces >= 20)
+    end)
+
+    it("plays nothing while static", function()
+      state("idle")
+      assert.are.equal(0, rings({ static = true }))
+    end)
+  end)
+
   describe("eco mode (still)", function()
     -- The surfaces painted in a frame: glows and the Clawd emote frames, in order.
     local function painted(opts)
@@ -592,6 +657,14 @@ describe("render.lua", function()
       assert.are.equal("auto", R.read_eco())
     end)
 
+    it("is on by default, and the off switch is remembered", function()
+      assert.is_false(R.read_off())
+      assert.is_true(R.write_off(true))
+      assert.is_true(R.read_off())
+      assert.is_true(R.write_off(false))
+      assert.is_false(R.read_off())
+    end)
+
     it("is remembered, and an unknown value falls back to the default", function()
       assert.is_true(R.write_layout("cards"))
       assert.are.equal("cards", R.read_layout())
@@ -633,6 +706,34 @@ describe("render.lua", function()
           end
         end
       end
+    end)
+
+    it("redraws a layout's still part only once the sessions are read again", function()
+      local real_time = GLib.get_real_time
+      local clock = os.time()
+      GLib.get_real_time = function() return clock * 1e6 end
+      local ok, err = pcall(function()
+        H.session(data, "s1", { state = "thinking", ts = clock,
+          timeline = { { k = "shell", s = clock - 300, e = clock - 200 } } })
+        R.read_sessions()
+        local surf = cairo.ImageSurface.create(cairo.Format.RGB24, 640, 360)
+        local cr = cairo.Context(surf)
+        local function frame(name)
+          R.draw(cr, 640, 360, { layout = "lanes", still = true })
+          surf:flush()
+          assert.are.equal("SUCCESS", surf:write_to_png(data .. name))
+          local f = assert(io.open(data .. name, "rb"))
+          local png = f:read("a"); f:close()
+          return png
+        end
+        local first = frame("a.png")
+        clock = clock + 120 -- the timeline would slide left by two minutes
+        assert.are.equal(first, frame("b.png")) -- still the cached layer
+        R.read_sessions()
+        assert.are_not.equal(first, frame("c.png"))
+      end)
+      GLib.get_real_time = real_time
+      assert(ok, err)
     end)
 
     it("renders a frame with the palette background", function()

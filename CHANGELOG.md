@@ -8,6 +8,14 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ### Added
 - **Four layouts**: `zen` (a dot per session in a corner, only the sessions that need you spelled out), `treemap` (tiles sized by time in tool calls over 30 min, split by kind), `flow` (Sankey diagram sessions → kinds → resources) and `tree` (icicle chart session → own calls and subagents → targets).
+- **Event effects** on every layout: a new session pops in with a ring, a permission request sends two shock waves out of the node, and a turn that ends after real work throws confetti (not after a wait or from idle). The layer redraws at full rate while one plays; nothing plays while static or in eco mode.
+- **Night sky** behind the `constellation` layout: faint twinkling stars and a shooting star every 11 seconds (the stars stay still in eco mode).
+- **Settings menu**: `constellation-menu` is a terminal menu for every setting (layer on/off, layout, eco mode, render backend, Promview poll and sign-in, lock screen); values apply as you step through them, so the wallpaper previews each one. `install.js` links it (re-run `node install.js`).
+- **Off mode**: `constellation-layout off|on|toggle` (or `set_off()` from a key binding) hides the desktop layer and stops all its work, redraws and session reads included; it survives restarts, and picking a layout switches it back on.
+
+### Changed
+- **Lighter frames for the timeline layouts.** `lanes`, `radar`, `flow`, `treemap` and `tree` draw what only changes with the sessions (timeline blocks, arcs, bands, tiles, labels) once per session read into an offscreen layer, then copy it under the moving nodes on every frame: 4–5 ms a frame instead of 10–40 ms at 2560×1440 with six busy sessions (CPU backend). Timelines now step once a second instead of sliding.
+- **20 fps instead of 30 while a session works** (desktop layer and lock screen): a third less drawing on every layout, `constellation` included; the Clawd emotes play at 14 fps anyway.
 
 ## [0.2.0] - 2026-10-25
 

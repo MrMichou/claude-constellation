@@ -46,11 +46,11 @@ local CLAWD = {
   rest = "crab",
 }
 
-local R = { FPS_ACTIVE = 30, FPS_IDLE = 8, FPS_ECO = 1 }
+local R = { FPS_ACTIVE = 20, FPS_IDLE = 8, FPS_ECO = 1 }
 
 -- Where session files, Claude Code's session registry (internal, best-effort), processes,
--- power supplies, graphics devices and the cache (theme, chosen layout, backend and eco mode)
--- live;
+-- power supplies, graphics devices and the cache (theme, chosen layout, backend, eco mode and
+-- off switch) live;
 -- overridable for tests.
 local DATA_DIR = os.getenv("HOME") .. "/.claude/constellation/"
 local PS_DIR = "/sys/class/power_supply/"
@@ -126,15 +126,16 @@ if type(manifest) ~= "table" then manifest = {} end
 -- Backend of the frame being drawn ("gpu" or "cpu", see R.draw) and the offscreen surfaces
 -- it caches: on the GPU they are made similar to the target (on X, pixmaps in video memory,
 -- so blitting them stays on the GPU); on the CPU, or if the target can't make them, images.
+-- opaque: no alpha channel (cheaper to copy).
 local backend = "cpu"
-local function offscreen(cr, w, h)
+local function offscreen(cr, w, h, opaque)
   if backend == "gpu" then
     local ok, surf = pcall(function()
-      return cr:get_target():create_similar(cairo.Content.COLOR_ALPHA, w, h)
+      return cr:get_target():create_similar(opaque and cairo.Content.COLOR or cairo.Content.COLOR_ALPHA, w, h)
     end)
     if ok and surf and surf.status == "SUCCESS" then return surf end
   end
-  return cairo.ImageSurface.create(cairo.Format.ARGB32, w, h)
+  return cairo.ImageSurface.create(opaque and cairo.Format.RGB24 or cairo.Format.ARGB32, w, h)
 end
 
 -- Strips are decoded lazily and memoised per backend: a list of cells plus their size (cells.w,
@@ -385,6 +386,42 @@ local function read_registry(seen)
   end
 end
 
+-- Event effects: a session showing up, asking for a permission or ending its turn starts a
+-- short effect around its node (K.node plays it): s._fx = { {kind, t0}, ... }. Seconds each:
+local FX = { born = 0.9, permission = 1.6, done = 1.8 }
+
+-- Notes what changed since the last read. The first sight of a session is a birth (so all of
+-- them pop in when Awesome or the lock screen starts); a turn only ends after real work.
+local function track_fx(s, t)
+  local fx = s._fx
+  if not fx then
+    s._fx, s._fx_state = { { kind = "born", t0 = t } }, s.state
+    return
+  end
+  local prev = s._fx_state
+  if prev ~= s.state then
+    if s.state == "permission" then fx[#fx + 1] = { kind = "permission", t0 = t }
+    elseif s.state == "done" and (prev == "thinking" or prev == "tool" or prev == "permission") then
+      fx[#fx + 1] = { kind = "done", t0 = t }
+    end
+    s._fx_state = s.state
+  end
+  for i = #fx, 1, -1 do
+    if t - fx[i].t0 > FX[fx[i].kind] then table.remove(fx, i) end
+  end
+end
+
+-- Whether an effect is still playing: the redraw rate stays high until it ends.
+function R.fx_playing()
+  local t = now()
+  for _, s in pairs(sessions) do
+    for _, e in ipairs(s._fx or {}) do
+      if t - e.t0 < FX[e.kind] then return true end
+    end
+  end
+  return false
+end
+
 -- Reload the session files; returns whether any session is working, and the session count.
 function R.read_sessions()
   local seen, seen_files = {}, {}
@@ -431,6 +468,7 @@ function R.read_sessions()
   local active = false
   for sid, s in pairs(sessions) do
     order[#order + 1] = sid
+    track_fx(s, t)
     if is_active(s) or has_running_agent(s, t) then active = true end
   end
   table.sort(order)
@@ -600,6 +638,79 @@ function K.text(cr, str, x, y, size, c, a, align)
   cr:show_text(str)
 end
 
+-- A layout's still part (what only changes with the sessions: timelines, bands, tiles, labels)
+-- is drawn once per session read into an offscreen frame, background included, then copied onto
+-- every frame; the layout draws what moves (nodes, glows, pulses) on top. Hundreds of small
+-- shapes then cost one copy a frame. draw(cr) gets the layer's context. `key` stands for what
+-- else the still part depends on, the layout's name at least; nil draws it straight onto the
+-- frame (e.g. while tiles ease), as does a context that isn't cairo's (the specs' recorder).
+-- One layer, for the layout on screen; R.draw drops it when the layout doesn't use it.
+local layer = {}
+function K.layer(cr, w, h, f, key, draw)
+  local ok, target = pcall(function() return cr:get_target() end)
+  if key == nil or not ok or not target then return draw(cr) end
+  layer.used = true
+  local id = table.concat({ backend, w, h, f.gen, tostring(f.static), tostring(f.private), key }, "|")
+  if layer.id ~= id or layer.C ~= C then
+    local bw, bh = math.ceil(w), math.ceil(h)
+    if not (layer.surf and layer.backend == backend and layer.w == bw and layer.h == bh) then
+      if layer.surf then layer.surf:finish() end
+      layer.surf, layer.backend, layer.w, layer.h = offscreen(cr, bw, bh, true), backend, bw, bh
+    end
+    layer.id = nil -- until drawn whole
+    local lc = cairo.Context(layer.surf)
+    set(lc, C.bg); lc:paint()
+    local was = bold
+    bold = nil; K.bold(lc, false) -- a fresh context starts with the default font
+    draw(lc)
+    bold = nil; K.bold(cr, was)
+    layer.surf:flush()
+    layer.id, layer.C = id, C
+  end
+  cr:save()
+  cr:set_operator(cairo.Operator.SOURCE)
+  cr:set_source_surface(layer.surf, 0, 0)
+  cr:paint()
+  cr:restore()
+end
+
+-- A gradient from (x0, y0) to (x1, y1) in colour c, alpha a0 to a1, for cr:set_source.
+function K.linear(x0, y0, x1, y1, c, a0, a1)
+  local pat = cairo.Pattern.create_linear(x0, y0, x1, y1)
+  pat:add_color_stop_rgba(0, c[1], c[2], c[3], a0)
+  pat:add_color_stop_rgba(1, c[1], c[2], c[3], a1)
+  return pat
+end
+
+-- Straight lines, batched: every stroke has a high fixed cost, so K.line queues a line and
+-- K.lines draws the queue with one stroke per colour, width and alpha (rounded to 1/100), in the
+-- order they first came. Overlaps within a batch blend once, which faint links don't show.
+local batches, batch_of = {}, {}
+function K.line(c, a, x1, y1, x2, y2, width)
+  a = math.floor(a * 100 + 0.5)
+  if a <= 0 then return end
+  width = width or 1
+  local by_c = batch_of[c]
+  if not by_c then by_c = {}; batch_of[c] = by_c end
+  local key = width * 1000 + a
+  local b = by_c[key]
+  if not b then
+    b = { c = c, a = a / 100, width = width }
+    by_c[key] = b
+    batches[#batches + 1] = b
+  end
+  b[#b + 1] = x1; b[#b + 1] = y1; b[#b + 1] = x2; b[#b + 1] = y2
+end
+function K.lines(cr)
+  for _, b in ipairs(batches) do
+    cr:set_line_width(b.width)
+    set(cr, b.c, b.a)
+    for i = 1, #b, 4 do cr:move_to(b[i], b[i + 1]); cr:line_to(b[i + 2], b[i + 3]) end
+    cr:stroke()
+  end
+  batches, batch_of = {}, {}
+end
+
 function K.rrect(cr, x, y, w, h, r)
   cr:new_sub_path()
   cr:arc(x + w - r, y + r, r, -math.pi / 2, 0)
@@ -655,10 +766,77 @@ function K.by_urgency(list)
   return out
 end
 
+local function ease_out(u) return 1 - (1 - u) ^ 3 end
+local function ease_out_back(u) -- overshoots a little, then settles at 1
+  local c = 1.70158
+  return 1 + (c + 1) * (u - 1) ^ 3 + c * (u - 1) ^ 2
+end
+
+-- A soft ring: a wide faint stroke under a thin bright one.
+local function soft_ring(cr, x, y, r, c, a, lw)
+  for _, p in ipairs({ { 3 * lw, 0.25 * a }, { lw, a } }) do
+    cr:set_line_width(p[1])
+    set(cr, c, p[2])
+    cr:new_sub_path(); cr:arc(x, y, r, 0, 2 * math.pi); cr:stroke()
+  end
+end
+
+-- Stable pseudo-random in 0..1 for confetti piece n of a burst.
+local function hash(n) local v = math.sin(n * 12.9898) * 43758.5453; return v - math.floor(v) end
+
+local CONFETTI = 22
+
+-- Confetti from a node whose turn just ended: pieces of every kind colour thrown out with drag,
+-- falling, spinning and fading. u is the effect's progress (0..1), dt its age in seconds.
+local function confetti(cr, x, y, k, u, dt, seed, A)
+  local drag, g = 3.2, 260 * k
+  local spread = (1 - math.exp(-drag * dt)) / drag
+  for n = 1, CONFETTI do
+    local r1, r2, r3 = hash(seed + n), hash(seed + n + 0.37), hash(seed + n + 0.71)
+    local ang = (n / CONFETTI + 0.3 * r1) * 2 * math.pi
+    local v = (380 + 320 * r2) * k
+    local px = x + math.cos(ang) * v * spread
+    local py = y + math.sin(ang) * v * spread - 120 * k * spread + 0.5 * g * dt * dt
+    local c = C.kind[KINDS[(n % #KINDS) + 1]]
+    cr:save()
+    cr:translate(px, py)
+    cr:rotate(r3 * 6 + dt * (6 + 8 * r1))
+    set(cr, c, (1 - u ^ 2) * A)
+    cr:rectangle(-3.5 * k, -1.5 * k, 7 * k, 3 * k)
+    cr:fill()
+    cr:restore()
+  end
+end
+
 -- A session's node: glow pulsing with its state, and its Clawd emote on top (a dot if the
--- sprites are missing). `size` is the sprite size; the glow scales with it.
+-- sprites are missing). `size` is the sprite size; the glow scales with it. Plays the
+-- session's event effects too (see track_fx): popping in with a ring, two shock waves on a
+-- permission request, confetti when a turn ends. Nothing of them while static.
 function K.node(cr, s, i, x, y, f, size)
   local t, A, col = f.t, s.alpha, K.node_color(s)
+  local k = size / SPRITE_SIZE
+  local scale, burst = 1, nil
+  for _, e in ipairs(not f.static and s._fx or {}) do
+    local dt = t - e.t0
+    local u = dt / FX[e.kind]
+    if u >= 0 and u < 1 then
+      if e.kind == "born" then
+        scale = 0.25 + 0.75 * ease_out_back(math.min(1, u / 0.7))
+        soft_ring(cr, x, y, size * (0.3 + 1.4 * ease_out(u)), col, 0.8 * (1 - u), 1 + 2 * (1 - u))
+      elseif e.kind == "permission" then
+        for j = 0, 1 do
+          local v = (u - 0.3 * j) / 0.7
+          if v > 0 and v < 1 then
+            soft_ring(cr, x, y, size * (0.5 + 2.2 * ease_out(v)), C.permission, 0.9 * (1 - v) ^ 1.5 * A,
+              1 + 3 * (1 - v))
+          end
+        end
+      elseif e.kind == "done" then
+        burst = { u = u, dt = dt, seed = e.t0 % 1000 }
+        if u < 0.3 then K.glow(cr, x, y, size * (0.6 + 1.2 * u), C.fg, 0.5 * (1 - u / 0.3) * A) end
+      end
+    end
+  end
   local pulse
   if f.static then pulse = 0.6
   elseif s.state == "thinking" then pulse = 0.5 + 0.5 * math.sin(t * 5)
@@ -666,17 +844,17 @@ function K.node(cr, s, i, x, y, f, size)
   elseif s.state == "permission" then pulse = (math.floor(t * 2) % 2 == 0) and 1 or 0.3
   elseif s.state == "waiting" then pulse = 0.5 + 0.5 * math.sin(t * 1.5)
   else pulse = 0.25 end
-  local k = size / SPRITE_SIZE
-  K.glow(cr, x, y, (40 + 18 * pulse) * k, col, (0.35 + 0.4 * pulse) * A)
+  K.glow(cr, x, y, (40 + 18 * pulse) * k * scale, col, (0.35 + 0.4 * pulse) * A)
   local name, loops = emote(s, t)
   local frames = sprite_set(name, cr)
   if #frames > 0 then
     -- Desynced per session; the first frame when still (eco mode).
     local idx = loops and not f.still and math.floor(t * SPRITE_FPS + i * 7) or 0
-    draw_sprite(cr, frames, idx, x, y, A, size)
+    draw_sprite(cr, frames, idx, x, y, A, size * scale)
   else
-    set(cr, col, A); cr:arc(x, y, 5 * k, 0, 2 * math.pi); cr:fill()
+    set(cr, col, A); cr:arc(x, y, 5 * k * scale, 0, 2 * math.pi); cr:fill()
   end
+  if burst then confetti(cr, x, y, k, burst.u, burst.dt, burst.seed, A) end
 end
 
 local function runner_color(r)
@@ -801,6 +979,15 @@ function R.write_layout(name)
   local f = io.open(R.CACHE_DIR .. "layout", "w")
   if not f then return false end
   f:write(name, "\n"); f:close()
+  return true
+end
+
+-- Whether the desktop layer is switched off (init.lua's set_off); kept across restarts.
+function R.read_off() return read_line(R.CACHE_DIR .. "off") == "1" end
+function R.write_off(off)
+  local f = io.open(R.CACHE_DIR .. "off", "w")
+  if not f then return false end
+  f:write(off and "1" or "0", "\n"); f:close()
   return true
 end
 
@@ -929,7 +1116,12 @@ function R.draw(cr, w, h, opts)
   set(cr, C.bg); cr:paint()
   bold = nil; K.bold(cr, false) -- a fresh context starts with the default font
   local layout = layouts[opts.layout] or layouts.constellation
+  layer.used = false
   layout(K, cr, w, h, f)
+  if not layer.used and layer.surf then -- a full-screen surface: freed once unused
+    layer.surf:finish()
+    layer.surf, layer.id = nil, nil
+  end
   if cr ~= out then
     cpu_buf:flush()
     out:set_source_surface(cpu_buf, 0, 0)

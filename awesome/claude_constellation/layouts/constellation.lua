@@ -39,9 +39,61 @@ local function draw_links(K, cr, f)
   end
 end
 
+-- A night sky behind the sessions: faint stars twinkling, and now and then a shooting star.
+-- Stars are placed once per screen size from a fixed seed; each frame they are batched into a
+-- few brightness levels, so the sky costs a handful of fills.
+local STARS, LEVELS = 140, 5
+local SHOOT_EVERY, SHOOT_TIME = 11, 0.9 -- seconds between shooting stars, and how long one lasts
+local sky = {}
+
+local function rand(n) local v = math.sin(n * 78.233) * 43758.5453; return v - math.floor(v) end
+
+local function draw_sky(K, cr, w, h, f)
+  if sky.w ~= w or sky.h ~= h then
+    sky = { w = w, h = h }
+    for n = 1, STARS do
+      sky[n] = { x = rand(n) * w, y = rand(n + 0.5) * h, r = 0.6 + 1.1 * rand(n + 0.25) ^ 3,
+        speed = 0.4 + 1.6 * rand(n + 0.75), phase = rand(n + 0.9) * 6.28 }
+    end
+  end
+  local by = {}
+  for l = 1, LEVELS do by[l] = {} end
+  for _, s in ipairs(sky) do
+    local b = 0.5 + 0.5 * math.sin(f.ta * s.speed + s.phase)
+    local l = math.min(LEVELS, math.floor(b * LEVELS) + 1)
+    by[l][#by[l] + 1] = s
+  end
+  for l = 1, LEVELS do
+    K.set(cr, K.C.fg, 0.08 + 0.4 * (l - 1) / (LEVELS - 1))
+    for _, s in ipairs(by[l]) do
+      cr:new_sub_path(); cr:arc(s.x, s.y, s.r, 0, 2 * math.pi)
+    end
+    cr:fill()
+  end
+
+  if f.static then return end
+  local cycle = math.floor(f.ta / SHOOT_EVERY)
+  local u = (f.ta - cycle * SHOOT_EVERY) / SHOOT_TIME
+  if u >= 1 then return end
+  -- From somewhere in the upper half, down and sideways; a fading tail behind a bright head.
+  local x0, y0 = (0.15 + 0.7 * rand(cycle)) * w, (0.05 + 0.35 * rand(cycle + 0.5)) * h
+  local dir = rand(cycle + 0.3) < 0.5 and -1 or 1
+  local len = 0.35 * w
+  local hx, hy = x0 + dir * len * u, y0 + 0.4 * len * u
+  local tail = 0.18 * w * math.min(1, u * 3)
+  local tx, ty = hx - dir * tail, hy - 0.4 * tail
+  local a = math.sin(u * math.pi)
+  local pat = K.linear(tx, ty, hx, hy, K.C.fg, 0, 0.8 * a)
+  cr:set_source(pat)
+  cr:set_line_width(2)
+  cr:move_to(tx, ty); cr:line_to(hx, hy); cr:stroke()
+  K.glow(cr, hx, hy, 8, K.C.fg, 0.9 * a)
+end
+
 return function(K, cr, w, h, f)
   local C, t, ta = K.C, f.t, f.ta
   local n = #f.list
+  draw_sky(K, cr, w, h, f)
   local cx, cy = w / 2, h / 2 + 15
   local rx, ry = w * 0.32, h * 0.28
   for i, s in ipairs(f.list) do

@@ -83,6 +83,7 @@ end
 
 local function poll()
   local active, count = R.read_sessions()
+  active = active or R.fx_playing()
   -- Promview alerts written by the desktop layer, only shown by the HUD; old ones are stale.
   local alerts = layout == "hud" and R.read_alerts() or nil
   if alerts and os.time() - alerts.fetched > 300 then alerts.ok, alerts.error = false, "stale" end

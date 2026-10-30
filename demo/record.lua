@@ -7,8 +7,9 @@
 -- "layouts" cycles through every layout (R.LAYOUTS), an equal share of the time each;
 -- "layout:<name>" shows that one only.
 -- "promview" is the hud layout with a board of made-up Promview alerts, under a 36px bar.
--- Scenarios: "sessions" (default, four everyday sessions) and "workflow" (a big multi-agent
--- workflow fanning out to ~30 subagents, to show runners being grouped and ungrouped).
+-- Scenarios: "sessions" (default, four everyday sessions), "effects" (the same, plus a session
+-- starting mid-way, to show every event effect) and "workflow" (a big multi-agent workflow
+-- fanning out to ~30 subagents, to show runners being grouped and ungrouped).
 
 local OUT, MODE = arg[1], arg[2] or "wallpaper"
 local W, H = tonumber(arg[3]) or 1280, tonumber(arg[4]) or 720
@@ -116,7 +117,7 @@ local function agent(sid, id, event, a1, a2, a3)
 end
 
 local timeline
-if SCENARIO == "sessions" then
+if SCENARIO == "sessions" or SCENARIO == "effects" then
 session("a", "claude-constellation", "thinking", {
   { "file", "…/claude_constellation/init.lua", -140 },
   { "search", "FPS_IDLE", -95 },
@@ -213,6 +214,16 @@ timeline = {
   { 10.5, "c", "pre", "Bash", "shell", "terraform plan" },
   { 11.0, "b", "post" },
 }
+if SCENARIO == "effects" then -- a new session pops in, then gets to work
+  table.insert(timeline, { 1.5, function()
+    session("e", "blog", "thinking", {})
+    S.e.ts = T0 + clock
+    save(S.e)
+  end })
+  table.insert(timeline, { 3.4, "e", "pre", "Read", "file", "…/posts/constellation.md" })
+  table.insert(timeline, { 4.5, "e", "post" })
+  table.sort(timeline, function(x, y) return x[1] < y[1] end)
+end
 
 elseif SCENARIO == "workflow" then
   -- Deterministic pseudo-random so the GIF is reproducible.

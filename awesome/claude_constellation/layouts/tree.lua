@@ -5,6 +5,7 @@
 
 local WINDOW = 30 * 60
 local SESSION_MIN, GAP, PAD = 64, 10, 3
+local TOP = 50
 
 -- Calls over the window (targets from an older hook without a timeline).
 local function own_calls(s, t)
@@ -57,12 +58,11 @@ local function label(K, cr, x, y, w, h, str, size, col, a, sub, sub_col)
   cr:restore()
 end
 
-return function(K, cr, w, h, f)
-  local C, t, private = K.C, f.t, f.private
+-- Rows for the sessions, recomputed when they change: { {s, kids, v, y, rh}, ... }
+local function build(K, h, f)
+  local t, private = f.t, f.private
   local n = #f.list
-  if n == 0 then return end
-  local top, bottom = 50, h - 40
-  local x1, x2, x3, x4 = 24, w * 0.25, w * 0.50, w - 24
+  local top, bottom = TOP, h - 40
 
   -- Weights: the session's own calls plus each subagent (or group).
   local rows, total = {}, 0
@@ -82,11 +82,24 @@ return function(K, cr, w, h, f)
   end
   local avail = bottom - top - GAP * (n - 1)
   local scale = math.max(0, (avail - n * SESSION_MIN) / total)
-
   local y = top
-  for i, row in ipairs(rows) do
+  for _, row in ipairs(rows) do
+    row.y, row.rh = y, math.max(SESSION_MIN, row.v * scale)
+    y = y + row.rh + GAP
+  end
+  return rows
+end
+
+local function node_size(row) return math.min(44, row.rh - 16) end
+
+-- Everything but the nodes: it only changes with the sessions (see K.layer).
+local function still(K, cr, w, f, rows)
+  local C, private = K.C, f.private
+  local top = TOP
+  local x1, x2, x3, x4 = 24, w * 0.25, w * 0.50, w - 24
+  for _, row in ipairs(rows) do
     local s, A, col = row.s, row.s.alpha, K.node_color(row.s)
-    local rh = math.max(SESSION_MIN, row.v * scale)
+    local y, rh = row.y, row.rh
 
     -- Session.
     cell(K, cr, x1, y, x2 - x1 - PAD, rh, col, A)
@@ -94,9 +107,7 @@ return function(K, cr, w, h, f)
       K.set(cr, col, A); cr:set_line_width(2)
       K.rrect(cr, x1, y, x2 - x1 - PAD, rh, math.min(6, rh / 2)); cr:stroke()
     end
-    local size = math.min(44, rh - 16)
-    K.place(s, x1 + 16 + size / 2, y + rh / 2, f, 0.2)
-    K.node(cr, s, i, s.x, s.y, f, size)
+    local size = node_size(row)
     cr:save(); cr:rectangle(x1, y, x2 - x1 - 10, rh); cr:clip()
     local tx = x1 + 28 + size
     K.bold(cr, true); K.text(cr, K.name(s), tx, y + rh / 2 - 3, 13, C.fg, A); K.bold(cr, false)
@@ -135,10 +146,26 @@ return function(K, cr, w, h, f)
       end
       ky = ky + kh
     end
-    y = y + rh + GAP
   end
 
   K.text(cr, "session", x1, top - 16, 11, C.dim, 1)
   K.text(cr, "own calls · subagents", x2, top - 16, 11, C.dim, 1)
   K.text(cr, private and "kinds" or "recent targets", x3, top - 16, 11, C.dim, 1)
+end
+
+local cache = {}
+
+return function(K, cr, w, h, f)
+  if #f.list == 0 then return end
+  if cache.gen ~= f.gen or cache.h ~= h or cache.private ~= f.private then
+    cache.rows = build(K, h, f)
+    cache.gen, cache.h, cache.private = f.gen, h, f.private
+  end
+  local rows = cache.rows
+  K.layer(cr, w, h, f, "tree", function(lc) still(K, lc, w, f, rows) end)
+  for i, row in ipairs(rows) do
+    local size = node_size(row)
+    K.place(row.s, 24 + 16 + size / 2, row.y + row.rh / 2, f, 0.2)
+    K.node(cr, row.s, i, row.s.x, row.s.y, f, size)
+  end
 end

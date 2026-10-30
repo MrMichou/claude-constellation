@@ -73,10 +73,10 @@ local function bezier(u, x1, y1, x2, y2)
     v ^ 3 * y1 + 3 * v * v * u * y1 + 3 * v * u * u * y2 + u ^ 3 * y2
 end
 
-return function(K, cr, w, h, f)
-  local C, t = K.C, f.t
-  if #f.list == 0 then return end
-  local private = f.private
+-- Columns, bands and pulses for the sessions, recomputed when they change: { xs, xk, xr, top,
+-- snodes, knodes, rnodes, bands = { {k, s, x1, y1, x2, y2, hgt}, ... }, sparks }.
+local function build(w, h, f)
+  local t, private = f.t, f.private
   local top, bottom = 60, h - 50
   local xs = math.max(250, w * 0.17)
   local xk = private and w * 0.62 or w * 0.50
@@ -148,18 +148,17 @@ return function(K, cr, w, h, f)
   stack(knodes, scale, top, bottom)
   stack(rnodes, scale, top, bottom)
 
-  -- Bands: session -> kind, then kind -> resource.
-  local spark = {}
+  -- Bands: session -> kind, then kind -> resource; a pulse on the band of each running call.
+  local bands, sparks = {}, {}
   for _, sn in ipairs(snodes) do
-    local A = sn.s.alpha
     for _, k in ipairs(KINDS) do
       local v = sn.kinds[k]
       if v then
         local kn, hgt = kidx[k], v * scale
-        K.set(cr, K.kind_color(k), 0.3 * A)
-        band(cr, xs + BAR, sn.cursor_out, xk, kn.cursor_in, hgt); cr:fill()
+        bands[#bands + 1] = { k = k, s = sn.s, x1 = xs + BAR, y1 = sn.cursor_out, x2 = xk, y2 = kn.cursor_in,
+          hgt = hgt }
         if sn.s.state == "tool" and kind_of(sn.s.kind) == k then
-          spark[#spark + 1] = { sn.s, xs + BAR, sn.cursor_out + hgt / 2, xk, kn.cursor_in + hgt / 2, k }
+          sparks[#sparks + 1] = { sn.s, xs + BAR, sn.cursor_out + hgt / 2, xk, kn.cursor_in + hgt / 2, k }
         end
         sn.cursor_out, kn.cursor_in = sn.cursor_out + hgt, kn.cursor_in + hgt
       end
@@ -167,25 +166,26 @@ return function(K, cr, w, h, f)
   end
   for _, fl in ipairs(flows_r) do
     local hgt = fl.v * scale
-    K.set(cr, K.kind_color(fl.k), 0.22)
-    band(cr, xk + BAR, fl.from.cursor_out, xr, fl.to.cursor_in, hgt); cr:fill()
+    bands[#bands + 1] = { k = fl.k, x1 = xk + BAR, y1 = fl.from.cursor_out, x2 = xr, y2 = fl.to.cursor_in,
+      hgt = hgt }
     fl.from.cursor_out, fl.to.cursor_in = fl.from.cursor_out + hgt, fl.to.cursor_in + hgt
   end
-  -- A pulse runs along the band of each running call.
-  if not f.static then
-    for i, sp in ipairs(spark) do
-      local x, y = bezier((f.ta * 0.5 + i * 0.37) % 1, sp[2], sp[3], sp[4], sp[5])
-      K.glow(cr, x, y, 12, K.kind_color(sp[6]), 0.8 * sp[1].alpha)
-    end
-  end
+  return { xs = xs, xk = xk, xr = xr, top = top, snodes = snodes, knodes = knodes, rnodes = rnodes,
+    bands = bands, sparks = sparks }
+end
 
-  -- Sessions.
-  for i, sn in ipairs(snodes) do
+-- Everything but the pulses and the nodes: it only changes with the sessions (see K.layer).
+local function still(K, cr, w, h, m)
+  local C, xs, xk, xr = K.C, m.xs, m.xk, m.xr
+  for _, b in ipairs(m.bands) do
+    K.set(cr, K.kind_color(b.k), b.s and 0.3 * b.s.alpha or 0.22)
+    band(cr, b.x1, b.y1, b.x2, b.y2, b.hgt); cr:fill()
+  end
+  -- Sessions (their nodes are drawn on top, every frame).
+  for _, sn in ipairs(m.snodes) do
     local s, A, col = sn.s, sn.s.alpha, K.node_color(sn.s)
     local cy = sn.y + sn.slot / 2
     K.set(cr, col, 0.9 * A); cr:rectangle(xs, sn.by, BAR, math.max(2, sn.bar)); cr:fill()
-    K.place(s, 50, cy, f, 0.2)
-    K.node(cr, s, i, s.x, s.y, f, 40)
     cr:save(); cr:rectangle(0, sn.y - 20, xs - 14, sn.slot + 40); cr:clip()
     K.bold(cr, true); K.text(cr, K.name(s), 86, cy - 3, 13, C.fg, A); K.bold(cr, false)
     local count = sn.v == 0 and "" or (" · " .. sn.v .. (sn.v == 1 and " call" or " calls"))
@@ -193,7 +193,7 @@ return function(K, cr, w, h, f)
     cr:restore()
   end
   -- Kinds.
-  for _, kn in ipairs(knodes) do
+  for _, kn in ipairs(m.knodes) do
     local col = K.kind_color(kn.k)
     K.set(cr, col); cr:rectangle(xk, kn.by, BAR, math.max(2, kn.bar)); cr:fill()
     K.bold(cr, true); K.text(cr, kn.k, xk + BAR + 8, kn.y + kn.slot / 2 + 1, 12, col, 1); K.bold(cr, false)
@@ -201,15 +201,37 @@ return function(K, cr, w, h, f)
   end
   -- Resources.
   cr:save(); cr:rectangle(xr, 0, w - xr - 20, h); cr:clip()
-  for _, rn in ipairs(rnodes) do
+  for _, rn in ipairs(m.rnodes) do
     local col = rn.k and K.kind_color(rn.k) or C.dim
     K.set(cr, col, 0.9); cr:rectangle(xr, rn.by, BAR, math.max(2, rn.bar)); cr:fill()
     K.text(cr, rn.label, xr + BAR + 8, rn.y + rn.slot / 2 + 4, 11, rn.k and C.fg or C.dim, 0.85)
   end
   cr:restore()
 
-  K.text(cr, "tool calls, last 30 min", xs, top - 24, 11, C.dim, 1)
-  if #knodes == 0 then
+  K.text(cr, "tool calls, last 30 min", xs, m.top - 24, 11, C.dim, 1)
+  if #m.knodes == 0 then
     K.text(cr, "no tool calls in the last 30 min", (xs + w) / 2, h / 2, 13, C.dim, 1, true)
+  end
+end
+
+local cache = {}
+
+return function(K, cr, w, h, f)
+  if #f.list == 0 then return end
+  if cache.gen ~= f.gen or cache.w ~= w or cache.h ~= h or cache.private ~= f.private then
+    cache.m = build(w, h, f)
+    cache.gen, cache.w, cache.h, cache.private = f.gen, w, h, f.private
+  end
+  local m = cache.m
+  K.layer(cr, w, h, f, "flow", function(lc) still(K, lc, w, h, m) end)
+  if not f.static then
+    for i, sp in ipairs(m.sparks) do
+      local x, y = bezier((f.ta * 0.5 + i * 0.37) % 1, sp[2], sp[3], sp[4], sp[5])
+      K.glow(cr, x, y, 12, K.kind_color(sp[6]), 0.8 * sp[1].alpha)
+    end
+  end
+  for i, sn in ipairs(m.snodes) do
+    K.place(sn.s, 50, sn.y + sn.slot / 2, f, 0.2)
+    K.node(cr, sn.s, i, sn.s.x, sn.s.y, f, 40)
   end
 end
