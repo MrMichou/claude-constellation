@@ -34,6 +34,8 @@ Five more put the sessions that need you first:
 
 Four more show where the work goes:
 
+![zen, treemap, flow and tree](docs/layouts-work.png)
+
 - **zen**: almost nothing, one small dot per session in the bottom-right corner, breathing while it works. Only a session that needs you grows into a Clawd with its name and how long it has been waiting.
 - **treemap**: each session's tile is as big as the time it spent in tool calls over the last 30 minutes, split by kind: who works the most, and on what.
 - **flow**: a Sankey diagram of the last 30 minutes, sessions feeding the kinds of tool they called (band width = number of calls), and each kind feeding the resources it touched. A pulse runs along the band of each running call.
