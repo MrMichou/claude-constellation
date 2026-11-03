@@ -7,7 +7,7 @@ All notable changes to claude-constellation are documented here. This project fo
 ## [Unreleased]
 
 ### Fixed
-- The HUD no longer stutters while no session is working: its board moves on its own (a sparkline's latest value pulses, critical graphs and alerts blink), so it now redraws at the active rate instead of the idle one, on the desktop and the lock screen.
+- The HUD no longer stutters while no session is working: its board moves on its own (a sparkline's latest value pulses, critical graphs and alerts blink), so it now redraws at the active rate instead of the idle one, on the desktop and the lock screen (#18).
 
 ## [0.4.0] - 2026-11-03
 
