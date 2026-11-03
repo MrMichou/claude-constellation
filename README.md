@@ -63,11 +63,14 @@ constellation-menu
 
 One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in), Grafana (poll now, token) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
 
+**Choose layouts…** opens a checklist of every layout: `space` or `⏎` enables or disables the one picked, and `q` goes back. The Layout line and `next`/`prev` (the key binding, `constellation-layout`) skip the disabled layouts, but you can still pick one by name (`constellation-layout zen`). The list is kept in `~/.cache/claude-constellation/layouts-hidden`, one name per line. The last enabled layout can't be disabled, and disabling the one on screen moves on to the next. From Lua: `cc.set_layout_enabled("zen", false)` (or `true`, `"toggle"`).
+
 ```
   ✦ Claude constellation
 
     Display     ‹ on ›                    drawn on the desktop
   ▸ Layout      ‹ kanban ›         5/13   columns Needs you / Working / Done / Asleep
+                Choose layouts…           11/14 enabled in the Layout line and next/prev
     Eco mode    ‹ auto ›           1/3    on while on battery (off now)
     Rendering   ‹ auto ›           1/3    the GPU if there is one (in use: gpu)
     Promview    Poll now                  https://promview.example · desktop auto

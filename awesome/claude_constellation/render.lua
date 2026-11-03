@@ -988,6 +988,28 @@ function R.write_layout(name)
   return true
 end
 
+-- The layouts left out of next/prev (init.lua's set_layout_enabled), as a set { name = true };
+-- one name per line, unknown names dropped. Kept across restarts.
+function R.read_hidden_layouts()
+  local hidden = {}
+  local f = io.open(R.CACHE_DIR .. "layouts-hidden", "r")
+  if not f then return hidden end
+  for name in f:lines() do
+    if layouts[name] then hidden[name] = true end
+  end
+  f:close()
+  return hidden
+end
+function R.write_hidden_layouts(hidden)
+  local f = io.open(R.CACHE_DIR .. "layouts-hidden", "w")
+  if not f then return false end
+  for _, name in ipairs(R.LAYOUTS) do
+    if hidden[name] then f:write(name, "\n") end
+  end
+  f:close()
+  return true
+end
+
 -- Whether the desktop layer is switched off (init.lua's set_off); kept across restarts.
 function R.read_off() return read_line(R.CACHE_DIR .. "off") == "1" end
 function R.write_off(off)

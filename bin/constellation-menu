@@ -6,6 +6,8 @@
 //
 // Keys: up/down (or k/j) pick a line, left/right (or h/l) change its value, which applies at once
 // so the wallpaper previews it; enter runs an action (or steps a value); q or esc quits.
+// "Choose layouts…" opens a checklist of every layout: space or enter enables/disables the one
+// picked (left out of the Layout line and of next/prev), q or esc goes back.
 // Talks to Awesome through awesome-client, like constellation-layout and constellation-eco.
 
 const fs = require("fs");
@@ -46,7 +48,9 @@ const STATE = `
   -- an unknown name leaves the layout alone and returns it (modules without cc.layout)
   local l = cc.layout and cc.layout() or cc.set_layout('?')
   return table.concat({ l, tostring(cc.is_off and cc.is_off() or false), tostring(e or ''),
-    tostring(eon or false), tostring(b or ''), tostring(bnow or ''), table.concat(cc.layouts or {}, ',') }, '|')`;
+    tostring(eon or false), tostring(b or ''), tostring(bnow or ''), table.concat(cc.layouts or {}, ','),
+    table.concat(cc.hidden_layouts and cc.hidden_layouts() or {}, ','),
+    tostring(cc.set_layout_enabled ~= nil) }, '|')`;
 
 function awesome(action) {
   const lua = `local ok, cc = pcall(require, 'ui.desktop.claude_constellation')
@@ -59,10 +63,12 @@ function awesome(action) {
   const m = (r.stdout || "").match(/string "(.*)"/);
   if (!m) throw new Error("no answer from awesome-client");
   if (m[1].startsWith("error:")) throw new Error(m[1].slice(7));
-  const [layout, off, eco, ecoOn, backend, backendNow, layouts] = m[1].split("|");
+  const [layout, off, eco, ecoOn, backend, backendNow, layouts, hidden, canHide] = m[1].split("|");
   return {
     layout, off: off === "true", eco, ecoOn: ecoOn === "true", backend, backendNow,
     layouts: layouts ? layouts.split(",") : Object.keys(LAYOUT_HELP),
+    hidden: hidden ? hidden.split(",") : [],
+    canHide: canHide === "true", // false: a module too old for set_layout_enabled
   };
 }
 
@@ -100,13 +106,21 @@ let conf = promviewConf();
 let grafana = grafanaUrl();
 let row = 0;
 let message = "";
+let picking = false; // the layout checklist is open
+let pick = 0; // its line
+
+// The Layout line steps through the enabled layouts (and the one shown, even if disabled).
+const enabledLayouts = () => state.layouts.filter((l) => !state.hidden.includes(l) || l === state.layout);
 
 // A choice line steps through `options` with left/right; an action line runs on enter.
 const ROWS = [
   { label: "Display", options: () => ["on", "off"], value: () => (state.off ? "off" : "on"),
     apply: (v) => `cc.set_off(${lua(v)})`, hint: (v) => (v === "off" ? "hidden, no redraws" : "drawn on the desktop") },
-  { label: "Layout", options: () => state.layouts, value: () => state.layout,
+  { label: "Layout", options: enabledLayouts, value: () => state.layout,
     apply: (v) => `cc.set_layout(${lua(v)})`, hint: (v) => LAYOUT_HELP[v] || "" },
+  { label: "", action: "Choose layouts…",
+    hint: () => `${state.layouts.length - state.hidden.length}/${state.layouts.length} enabled in the Layout line and next/prev`,
+    run: openPicker },
   { label: "Eco mode", options: () => ["auto", "on", "off"], value: () => state.eco,
     apply: (v) => `cc.set_eco(${lua(v)})`,
     hint: (v) => ECO_HELP[v] + (v === "auto" ? (state.ecoOn ? " (on now)" : " (off now)") : "") },
@@ -131,7 +145,45 @@ const tty = process.stdout.isTTY;
 const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
 const pad = (s, n) => s + " ".repeat(Math.max(0, n - [...s].length));
 
+function drawPicker() {
+  const lines = ["", `  ${c("1;38;5;111", "✦ Claude constellation")}  ${c("2", "· layouts")}`, ""];
+  state.layouts.forEach((l, i) => {
+    const sel = i === pick;
+    const cursor = sel ? c("38;5;111", "▸") : " ";
+    const on = !state.hidden.includes(l);
+    const box = on ? c("38;5;114", "[x]") : c("2", "[ ]");
+    const name = pad(l, 20) + (l === state.layout ? "•" : " ");
+    lines.push(`  ${cursor} ${box} ${sel ? c("1;38;5;111", name) : on ? name : c("2", name)}  ${c("2", LAYOUT_HELP[l] || "")}`);
+  });
+  lines.push("", c("2", "  ↑↓ choose   space/⏎ enable/disable   • shown now   q back"), "", message ? `  ${message}` : "");
+  if (tty) process.stdout.write("\x1b[H\x1b[2J" + lines.join("\n"));
+}
+
+function openPicker() {
+  if (!state.canHide) { message = c("38;5;221", "Restart Awesome to load a module that can disable layouts"); return; }
+  picking = true;
+  pick = Math.max(0, state.layouts.indexOf(state.layout));
+}
+
+function togglePicked() {
+  const l = state.layouts[pick];
+  const on = state.hidden.includes(l);
+  if (!on && state.layouts.length - state.hidden.length <= 1) {
+    message = c("38;5;221", `${l} is the last layout enabled`); return;
+  }
+  act(`cc.set_layout_enabled(${lua(l)}, ${on})`, `${l}: ${on ? "enabled" : "disabled"}`);
+}
+
+function pickerKey(k) {
+  const n = state.layouts.length;
+  if (k === "\x1b[A" || k === "k") pick = (pick + n - 1) % n;
+  else if (k === "\x1b[B" || k === "j" || k === "\t") pick = (pick + 1) % n;
+  else if (k === " " || k === "\r" || k === "\n" || k === "\x1b[D" || k === "\x1b[C" || k === "h" || k === "l") togglePicked();
+  else if (k === "q" || k === "\x1b") picking = false;
+}
+
 function draw() {
+  if (picking) return drawPicker();
   const lines = ["", `  ${c("1;38;5;111", "✦ Claude constellation")}`, ""];
   ROWS.forEach((r, i) => {
     const sel = i === row;
@@ -217,6 +269,8 @@ function external(name, ok, failed) {
 function key(k) {
   if (paused) return;
   message = "";
+  if (k === "\x03") return quit();
+  if (picking) { pickerKey(k); if (!quitting && !paused) draw(); return; }
   if (k === "\x1b[A" || k === "k") row = (row + ROWS.length - 1) % ROWS.length;
   else if (k === "\x1b[B" || k === "j" || k === "\t") row = (row + 1) % ROWS.length;
   else if (k === "\x1b[D" || k === "h") step(-1);
