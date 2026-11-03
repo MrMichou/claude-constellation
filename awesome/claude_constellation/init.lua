@@ -141,6 +141,7 @@ local function tick()
   if box then box.visible = visible end
 
   local alerts_shown = layout == "hud" and (R.alerts() ~= nil or R.metrics() ~= nil)
+  active = active or (alerts_shown and R.board_moving()) -- a pulsing graph, a blinking alert
   if not visible or (count == 0 and not alerts_shown) then
     if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
     return

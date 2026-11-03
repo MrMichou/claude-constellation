@@ -466,6 +466,27 @@ describe("render.lua", function()
     end)
   end)
 
+  describe("board_moving (the HUD board's own animation)", function()
+    after_each(function() R.set_metrics(nil); R.set_alerts(nil) end)
+
+    it("is still with no board, or one with nothing to pulse", function()
+      assert.is_false(R.board_moving())
+      R.set_metrics({ graphs = { { series = {} }, { series = { { vs = {} } }, min = 1, max = 2 } } })
+      R.set_alerts({ groups = { { severity = "warning" } } })
+      assert.is_false(R.board_moving())
+    end)
+
+    it("moves with a sparkline to pulse, a critical graph or a critical alert", function()
+      R.set_metrics({ graphs = { { series = { { ts = { 1 }, vs = { 3 } } }, min = 3, max = 3 } } })
+      assert.is_true(R.board_moving())
+      R.set_metrics({ graphs = { { series = {}, level = "crit" } } })
+      assert.is_true(R.board_moving())
+      R.set_metrics(nil)
+      R.set_alerts({ groups = { { severity = "critical" } } })
+      assert.is_true(R.board_moving())
+    end)
+  end)
+
   describe("eco mode (still)", function()
     -- The surfaces painted in a frame: glows and the Clawd emote frames, in order.
     local function painted(opts)

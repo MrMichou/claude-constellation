@@ -1077,6 +1077,21 @@ local metrics
 function R.set_metrics(state) metrics = state end
 function R.metrics() return metrics end
 
+-- Whether the HUD's board moves on its own, sessions or not: a sparkline's latest value pulses,
+-- a critical graph or alert card blinks. The redraw rate then stays high, like for a working
+-- session, else the board stutters at the idle rate while no session is around.
+function R.board_moving()
+  for _, g in ipairs(metrics and metrics.graphs or {}) do
+    if g.level == "crit" then return true end
+    local s1 = (g.series or {})[1]
+    if s1 and #(s1.vs or {}) > 0 and tonumber(g.min) and tonumber(g.max) then return true end
+  end
+  for _, g in ipairs(alerts and alerts.groups or {}) do
+    if g.severity == "critical" then return true end
+  end
+  return false
+end
+
 local METRICS_FILE = "grafana.json"
 function R.write_metrics(state)
   if not state then os.remove(R.CACHE_DIR .. METRICS_FILE); return true end
