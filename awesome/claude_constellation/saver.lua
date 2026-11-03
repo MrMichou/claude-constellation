@@ -92,6 +92,7 @@ local function poll()
   local metrics = layout == "hud" and R.read_metrics() or nil
   if metrics and os.time() - metrics.fetched > 300 then metrics.ok, metrics.error = false, "stale" end
   R.set_metrics(metrics)
+  active = active or ((alerts or metrics) and R.board_moving()) -- a pulsing graph, a blinking alert
   static = R.on_battery()
   eco = R.eco_active(eco_choice, static)
   if backend_choice == "auto" then backend = R.resolve_backend("auto") end
