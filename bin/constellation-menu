@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Terminal menu for every claude-constellation setting of the running AwesomeWM: the layer on/off,
-// the layout, eco mode, the render backend, Promview (poll now, sign in) and the lock screen.
+// the layout, eco mode, the render backend, Promview (poll now, sign in), Grafana (poll now, token)
+// and the lock screen.
 // Usage: constellation-menu
 //
 // Keys: up/down (or k/j) pick a line, left/right (or h/l) change its value, which applies at once
@@ -25,12 +26,13 @@ const LAYOUT_HELP = {
   kanban: "columns Needs you / Working / Done / Asleep",
   radar: "the last 30 min as a clock face, the most urgent in the middle",
   strip: "a band across the top, one chip per session",
-  hud: "a column on the right edge (and the Promview board)",
+  hud: "a column on the right edge (and the Promview / Grafana board)",
   popup: "the session list as a key binding would show it",
   zen: "one dot per session; only who needs you is spelled out",
   treemap: "tiles sized by time in tool calls over 30 min",
   flow: "Sankey: sessions -> kinds of tool -> resources",
   tree: "icicle: session -> calls and subagents -> targets",
+  "obsi-constellation": "the Obsidian vault's graph, the notes read and edited lit up",
 };
 const ECO_HELP = { auto: "on while on battery", on: "nothing moves, 1 frame/s", off: "full animation" };
 const BACKEND_HELP = { auto: "the GPU if there is one", gpu: "draw on the X surface", cpu: "draw in memory, one paint" };
@@ -76,11 +78,26 @@ function promviewConf() {
   return conf;
 }
 
+// grafana.conf's url (the global keys come before the first [graph] section).
+function grafanaUrl() {
+  const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  let text = "";
+  try { text = fs.readFileSync(path.join(dir, "claude-constellation", "grafana.conf"), "utf8"); } catch {}
+  let url = process.env.GRAFANA_URL || "";
+  for (const line of text.split("\n")) {
+    if (/^\s*\[/.test(line)) break;
+    const m = line.replace(/\s#.*/, "").match(/^\s*url\s*=\s*(.*?)\s*$/);
+    if (m && !process.env.GRAFANA_URL) url = m[1].replace(/^"(.*)"$/, "$1");
+  }
+  return url;
+}
+
 // --- Menu -----------------------------------------------------------------------------------
 
 const lua = (s) => `'${s.replace(/[\\']/g, "\\$&")}'`;
 let state;
 let conf = promviewConf();
+let grafana = grafanaUrl();
 let row = 0;
 let message = "";
 
@@ -101,6 +118,10 @@ const ROWS = [
     run: () => { conf = promviewConf(); act("if cc.promview_refresh then cc.promview_refresh() end", "Polled Promview"); } },
   { label: "", action: "Sign in…", hint: () => (conf.url ? "OIDC sign-in in your browser" : "set url in promview.conf first"),
     run: signIn },
+  { label: "Grafana", action: "Poll now", hint: () => grafana || "no url: set url in grafana.conf",
+    run: () => { grafana = grafanaUrl(); act("if cc.grafana_refresh then cc.grafana_refresh() end", "Polled Grafana"); } },
+  { label: "", action: "Set token…", hint: () => (grafana ? "service account token, kept in the keyring" : "set url in grafana.conf first"),
+    run: () => external("constellation-grafana-token", "Grafana token stored", "No token stored") },
   { label: "Lock screen", action: "Lock now", hint: () => "xsecurelock on the constellation",
     run: () => { act("cc.lock()", "Locked"); quit(); } },
   { label: "", action: "Quit", hint: () => "", run: () => quit() },
@@ -167,16 +188,25 @@ function quit() {
 let paused = false;
 function signIn() {
   if (!conf.url && !promviewConf().url) { message = c("38;5;221", "No Promview url: set url = … in promview.conf"); return; }
-  const login = path.join(path.dirname(fs.realpathSync(__filename)), "constellation-promview-login");
+  external("constellation-promview-login", "Signed in to Promview", "Sign-in failed");
+}
+
+// Hand the terminal to one of our commands, then come back to the menu.
+function external(name, ok, failed) {
+  if (name === "constellation-grafana-token" && !grafanaUrl()) {
+    message = c("38;5;221", "No Grafana url: set url = … in grafana.conf"); return;
+  }
+  const cmd = path.join(path.dirname(fs.realpathSync(__filename)), name);
   paused = true;
   rawMode(false);
   screen(false);
   process.stdin.pause();
-  const child = spawn(login, [], { stdio: "inherit" });
+  const child = spawn(cmd, [], { stdio: "inherit" });
   child.on("close", (code) => {
     paused = false;
-    message = code === 0 ? c("38;5;114", "Signed in to Promview") : c("38;5;203", `Sign-in failed (${code})`);
+    message = code === 0 ? c("38;5;114", ok) : c("38;5;203", `${failed} (${code})`);
     conf = promviewConf();
+    grafana = grafanaUrl();
     rawMode(true);
     screen(true);
     process.stdin.resume();

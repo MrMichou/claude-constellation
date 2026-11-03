@@ -88,11 +88,15 @@ local function poll()
   local alerts = layout == "hud" and R.read_alerts() or nil
   if alerts and os.time() - alerts.fetched > 300 then alerts.ok, alerts.error = false, "stale" end
   R.set_alerts(alerts)
+  -- Grafana graphs, same rule.
+  local metrics = layout == "hud" and R.read_metrics() or nil
+  if metrics and os.time() - metrics.fetched > 300 then metrics.ok, metrics.error = false, "stale" end
+  R.set_metrics(metrics)
   static = R.on_battery()
   eco = R.eco_active(eco_choice, static)
   if backend_choice == "auto" then backend = R.resolve_backend("auto") end
   -- No session: an empty background, repainted once a second in case the window was exposed.
-  schedule(((count == 0 and not alerts) or eco) and R.FPS_ECO
+  schedule(((count == 0 and not alerts and not metrics) or eco) and R.FPS_ECO
     or (active and not static) and R.FPS_ACTIVE or R.FPS_IDLE)
   collectgarbage("step") -- per-frame cairo contexts are only freed by the GC
   return true

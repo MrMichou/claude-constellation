@@ -89,10 +89,10 @@ describe("install.js", () => {
       expect(exists(cmdLink(name))).toBe(false);
     });
 
-  it("links constellation-promview-login too, and removes it", async () => {
-    const login = path.join(h.home, ".local", "bin", "constellation-promview-login");
+  it.each(["constellation-promview-login", "constellation-grafana-token"])("links %s too, and removes it", async (name) => {
+    const login = path.join(h.home, ".local", "bin", name);
     await install();
-    expect(fs.readlinkSync(login)).toBe(path.join(ROOT, "bin", "constellation-promview-login"));
+    expect(fs.readlinkSync(login)).toBe(path.join(ROOT, "bin", name));
     await install("--uninstall");
     expect(exists(login)).toBe(false);
   });

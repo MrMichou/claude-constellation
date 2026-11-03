@@ -636,6 +636,9 @@ function K.text(cr, str, x, y, size, c, a, align)
   cr:move_to(x0, y)
   set(cr, c, a)
   cr:show_text(str)
+  -- show_text leaves the move_to in the path and the current point at the text's end: the next
+  -- arc would start with a line from there, and its fill paint a wedge across the screen.
+  cr:new_path()
 end
 
 -- A layout's still part (what only changes with the sessions: timelines, bands, tiles, labels)
@@ -963,10 +966,13 @@ end
 -- Layouts ----------------------------------------------------------------------------------------
 -- Each layouts/<name>.lua returns function(K, cr, w, h, f), f being the frame:
 -- { t, ta (animation clock, frozen while static), static, private, list (sessions), links, gen,
--- alerts (Promview, see R.set_alerts), area (the screen's workarea {x, y, w, h}: what the bars
--- leave, nil for the whole frame) }.
+-- alerts (Promview, see R.set_alerts), metrics (Grafana, see R.set_metrics), area (the screen's
+-- workarea {x, y, w, h}: what the bars leave, nil for the whole frame) }.
 R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud", "popup",
-  "zen", "treemap", "flow", "tree" }
+  "zen", "treemap", "flow", "tree", "obsi-constellation" }
+-- Obsidian vaults and their graph, for the obsi-constellation layout (paths overridable for specs).
+R.obsidian = dofile(DIR .. "obsidian.lua")
+K.obsidian = R.obsidian
 local layouts = {}
 for _, name in ipairs(R.LAYOUTS) do layouts[name] = dofile(DIR .. "layouts/" .. name .. ".lua") end
 
@@ -1012,8 +1018,9 @@ local alerts
 function R.set_alerts(state) alerts = state end
 function R.alerts() return alerts end
 
--- Nested JSON for the cache (json.lua's encoder only does flat objects). Tables with a [1] or
--- listed in `arrays` are arrays.
+-- Nested JSON for the cache (json.lua's encoder only does flat objects). Tables with a [1], or
+-- under one of ARRAY_KEYS (so an empty one stays an array), are arrays.
+local ARRAY_KEYS = { where = true, groups = true, graphs = true, series = true, ts = true, vs = true }
 local function encode(v, arrays)
   local t = type(v)
   if t == "string" then
@@ -1029,7 +1036,7 @@ local function encode(v, arrays)
   end
   for k, x in pairs(v) do
     if type(k) == "string" then
-      parts[#parts + 1] = encode(k) .. ":" .. encode(x, k == "where" or k == "groups")
+      parts[#parts + 1] = encode(k) .. ":" .. encode(x, ARRAY_KEYS[k])
     end
   end
   return "{" .. table.concat(parts, ",") .. "}"
@@ -1059,6 +1066,40 @@ function R.read_alerts()
     g.count, g.newest = tonumber(g.count) or 0, tonumber(g.newest)
   end
   d.alerts = {}
+  return d
+end
+
+-- Grafana mini graphs shown by the HUD (see grafana.lua): nil while Grafana is off, else
+-- { ok, error, auth, fetched, from, to, graphs = { {title, unit, warn, crit, error, last, min, max,
+-- series = { {label, ts, vs}, ... }}, ... } }. Like the alerts, set by init.lua after each poll and
+-- written to the cache for the lock-screen saver.
+local metrics
+function R.set_metrics(state) metrics = state end
+function R.metrics() return metrics end
+
+local METRICS_FILE = "grafana.json"
+function R.write_metrics(state)
+  if not state then os.remove(R.CACHE_DIR .. METRICS_FILE); return true end
+  local f = io.open(R.CACHE_DIR .. METRICS_FILE, "w")
+  if not f then return false end
+  f:write(encode({ ok = state.ok == true, error = state.error, auth = state.auth,
+    fetched = state.fetched or 0, from = state.from or 0, to = state.to or 0, graphs = state.graphs or {} }))
+  f:close()
+  return true
+end
+function R.read_metrics()
+  local d = R.read_json(R.CACHE_DIR .. METRICS_FILE)
+  if type(d) ~= "table" or d.ok == nil then return nil end
+  d.ok, d.auth = d.ok == true, d.auth == true
+  d.fetched, d.from, d.to = tonumber(d.fetched) or 0, tonumber(d.from) or 0, tonumber(d.to) or 0
+  d.graphs = type(d.graphs) == "table" and d.graphs or {}
+  for _, g in ipairs(d.graphs) do
+    if type(g.series) ~= "table" then g.series = {} end
+    for _, s in ipairs(g.series) do
+      if type(s.ts) ~= "table" then s.ts = {} end
+      if type(s.vs) ~= "table" then s.vs = {} end
+    end
+  end
   return d
 end
 
@@ -1106,7 +1147,7 @@ function R.draw(cr, w, h, opts)
   local t = now()
   local static = opts.static or opts.still
   local f = { t = t, ta = static and 0 or t, static = static, still = opts.still, private = opts.private,
-    list = {}, links = links, gen = generation, alerts = alerts, area = opts.area }
+    list = {}, links = links, gen = generation, alerts = alerts, metrics = metrics, area = opts.area }
   for i, sid in ipairs(order) do
     local s = sessions[sid]
     s.stale = t - (tonumber(s.ts) or 0) > STALE_AFTER and not is_active(s)

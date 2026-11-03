@@ -34,6 +34,28 @@ describe("track.js hook", () => {
     expect(after.ts).toBeGreaterThanOrEqual(before.ts);
   });
 
+  it("names the session after CLAUDE_PROJECT_DIR, not the directory it cd'ed into", async () => {
+    const payload = { session_id: "s1", cwd: "/work/research/wiki", tool_name: "Bash", tool_input: { command: "ls" } };
+    await runNode(TRACK, ["pre"], { home: h.home, stdin: payload, env: { CLAUDE_PROJECT_DIR: "/work/research" } });
+    expect(state().project).toBe("research");
+  });
+
+  it("records the notes a shell script wrote during the call as edited", async () => {
+    const vault = path.join(h.home, "proj");
+    fs.mkdirSync(path.join(vault, "wiki", ".hidden"), { recursive: true });
+    fs.writeFileSync(path.join(vault, "wiki/Old.md"), "x");
+    const old = Date.now() / 1000 - 60;
+    fs.utimesSync(path.join(vault, "wiki/Old.md"), old, old);
+    const base = { session_id: "s1", cwd: vault, tool_use_id: "b1", tool_name: "Bash", tool_input: { command: "python3 build.py" } };
+    await hook("pre", base);
+    fs.writeFileSync(path.join(vault, "wiki/New.md"), "x");
+    fs.writeFileSync(path.join(vault, "wiki/.hidden/Skip.md"), "x");
+    fs.writeFileSync(path.join(vault, "wiki/app.js"), "x");
+    await hook("post", base);
+    expect(Object.keys(state().notes)).toEqual([path.join(vault, "wiki/New.md")]);
+    expect(state().notes[path.join(vault, "wiki/New.md")].w).toBeTypeOf("number");
+  });
+
   it("keeps the data dir and session files private to the user", async () => {
     await pre("Bash", { command: "curl -H 'Authorization: x'" });
     expect(fs.statSync(h.dataDir).mode & 0o777).toBe(0o700);
@@ -221,6 +243,17 @@ describe("track.js hook", () => {
       await hook("stop", { session_id: "s1" });
       expect(state().timeline[0].e).toBeGreaterThanOrEqual(state().timeline[0].s);
     });
+  });
+
+  it("records the notes a session reads and edits, for the obsi-constellation layout", async () => {
+    await pre("Read", { file_path: "/vault/A.md" });
+    await pre("Edit", { file_path: "/vault/A.md" });
+    await pre("Read", { file_path: "/vault/B.md" });
+    await pre("Read", { file_path: "/src/app.js" });
+    const { notes } = state();
+    expect(Object.keys(notes).sort()).toEqual(["/vault/A.md", "/vault/B.md"]);
+    expect(notes["/vault/A.md"].w).toBeGreaterThanOrEqual(notes["/vault/A.md"].r);
+    expect(notes["/vault/B.md"].w).toBeUndefined();
   });
 
   describe("shared-resource links", () => {

@@ -14,6 +14,7 @@ local MODULE_DIR = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 local R = dofile(MODULE_DIR .. "render.lua")
 local Promview = dofile(MODULE_DIR .. "promview.lua")
 local PromviewBus = dofile(MODULE_DIR .. "promview_bus.lua")
+local Grafana = dofile(MODULE_DIR .. "grafana.lua")
 
 -- On battery: "static" freezes everything but the Clawd emotes, "off" hides the layer.
 local ON_BATTERY = "static"
@@ -139,7 +140,7 @@ local function tick()
   local visible = not (battery and ON_BATTERY == "off")
   if box then box.visible = visible end
 
-  local alerts_shown = layout == "hud" and R.alerts() ~= nil
+  local alerts_shown = layout == "hud" and (R.alerts() ~= nil or R.metrics() ~= nil)
   if not visible or (count == 0 and not alerts_shown) then
     if anim.started then anim:stop(); redraw() end -- one last frame clears the old nodes
     return
@@ -256,6 +257,40 @@ if promview and promview.desktop ~= "off" then
   })
 end
 
+-- Grafana mini graphs for the HUD: same rules as Promview's curl poll (only while the HUD is the
+-- layout and the layer is shown; a failed poll keeps the last graphs, dimmed).
+local grafana = Grafana.read_config()
+local grafana_busy, grafana_last = false, 0
+local GRAFANA_CONNECTING = { ok = false, graphs = {} } -- until the first poll
+local function grafana_poll()
+  if not grafana or layout ~= "hud" or not (box and box.visible) or grafana_busy then return end
+  grafana_busy, grafana_last = true, os.time()
+  local cfg = grafana
+  awful.spawn.easy_async(Grafana.command(cfg), function(stdout, stderr, _, code)
+    grafana_busy = false
+    if cfg ~= grafana then return end -- the config changed meanwhile: its own poll follows
+    local state, err, auth
+    if code == 0 then state, err = Grafana.parse(stdout, cfg)
+    else err, auth = Grafana.failure(stderr, code) end
+    if state then
+      state.ok, state.fetched = true, os.time()
+    else
+      local prev = R.metrics() or {}
+      state = { ok = false, fetched = prev.fetched, from = prev.from, to = prev.to,
+        graphs = prev.graphs or {},
+        error = err, auth = auth }
+    end
+    R.set_metrics(state)
+    pcall(R.write_metrics, state)
+    redraw()
+  end)
+end
+if grafana then R.set_metrics(GRAFANA_CONNECTING)
+else pcall(R.write_metrics, nil) end -- Grafana turned off: the lock screen drops the old graphs
+local grafana_timer = gears.timer {
+  timeout = grafana and grafana.interval or 60, autostart = true, call_now = true, callback = grafana_poll,
+}
+
 -- Render one frame into a root-sized PNG (the constellation on the primary screen, black
 -- elsewhere), e.g. as an i3lock image: `i3lock -c 000000 -i <path>`. Returns true on success.
 local function snapshot(path, private)
@@ -307,6 +342,7 @@ local function set_layout(name)
   R.write_layout(name)
   if off then off = false; R.write_off(false); tick() end
   if os.time() - promview_last > 5 then promview_poll() end
+  if os.time() - grafana_last > 5 then grafana_poll() end
   redraw()
   notify("Layout: " .. name)
   return layout
@@ -368,6 +404,16 @@ return {
     promview_timer:again()
     promview_pace()
     promview_poll()
+  end,
+  -- Re-read grafana.conf and poll Grafana now (constellation-grafana-token calls it).
+  grafana_refresh = function()
+    grafana = Grafana.read_config()
+    if not grafana then R.set_metrics(nil); pcall(R.write_metrics, nil); redraw(); return end
+    if not R.metrics() then R.set_metrics(GRAFANA_CONNECTING) end
+    grafana_timer.timeout = grafana.interval
+    grafana_timer:again()
+    grafana_busy = false
+    grafana_poll()
   end,
   set_off = set_off,
   is_off = function() return off end,

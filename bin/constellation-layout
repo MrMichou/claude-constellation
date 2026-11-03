@@ -1,10 +1,10 @@
 #!/bin/sh
 # Switch the claude-constellation layout in the running AwesomeWM, or switch the layer off/on.
-# Usage: constellation-layout [next|prev|constellation|lanes|cards|resources|kanban|radar|strip|hud|popup|zen|treemap|flow|tree|off|on|toggle]
+# Usage: constellation-layout [next|prev|constellation|lanes|cards|resources|kanban|radar|strip|hud|popup|zen|treemap|flow|tree|obsi-constellation|off|on|toggle]
 set -eu
 case "${1:-next}" in
   -h|--help) sed -n '2,3s/^# //p' "$0"; exit 0 ;;
-  next|prev|constellation|lanes|cards|resources|kanban|radar|strip|hud|popup|zen|treemap|flow|tree)
+  next|prev|constellation|lanes|cards|resources|kanban|radar|strip|hud|popup|zen|treemap|flow|tree|obsi-constellation)
     call="cc.set_layout('${1:-next}')" ;;
   off|on|toggle)
     call="cc.set_off and (cc.set_off('$1') and 'off' or 'on') or 'error: module too old, restart awesome'" ;;

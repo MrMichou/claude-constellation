@@ -63,10 +63,11 @@ describe("constellation-menu", () => {
     expect(all).toContain("cc.set_backend('cpu')");
   });
 
-  it("polls Promview and locks the screen from their lines", async () => {
-    await menu(`5\r7\r`);
+  it("polls Promview and Grafana and locks the screen from their lines", async () => {
+    await menu(`5\r7\r9\r`);
     const all = calls().join("\n");
     expect(all).toContain("cc.promview_refresh()");
+    expect(all).toContain("cc.grafana_refresh()");
     expect(all).toContain("cc.lock()");
   });
 
