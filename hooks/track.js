@@ -28,6 +28,8 @@ const LOCK_WAIT = 3000; // ms to wait for the lock before writing anyway
 const LOCK_STALE = 2000; // ms after which a lock left by a killed hook is broken
 const TIMELINE_TTL = 1800; // seconds of tool calls kept for the swimlanes layout
 const TIMELINE_MAX = 200;
+const NOTES_MAX = 60; // markdown notes kept per session, for the obsi-constellation layout
+const NOTES_TTL = 3 * 3600;
 
 function shortPath(f) {
   if (!f) return "";
@@ -108,11 +110,14 @@ function linkKeys(t, input) {
 
 const cleanId = (v) => String(v || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
 
-// Project shown for the session. A subagent with `isolation: "worktree"` runs in
+// Project shown for the session. The hook's `cwd` follows the session's `cd`s (a session
+// working in <repo>/wiki would be named "wiki"), so the project root Claude Code exports as
+// CLAUDE_PROJECT_DIR wins. A subagent with `isolation: "worktree"` runs in
 // <repo>/.claude/worktrees/<agent-id> under the parent's session id: it still is <repo>.
-function projectName(cwd, prev) {
-  if (!cwd) return prev || "";
-  return path.basename(cwd.replace(/\/\.claude\/worktrees\/[^/]+(?:\/.*)?$/, ""));
+function projectName(cwd, prev, root = process.env.CLAUDE_PROJECT_DIR) {
+  const dir = root || cwd;
+  if (!dir) return prev || "";
+  return path.basename(dir.replace(/\/\.claude\/worktrees\/[^/]+(?:\/.*)?$/, ""));
 }
 
 // Drops finished and lost subagents, then the oldest ones past AGENTS_MAX.
@@ -159,6 +164,117 @@ function agentEvent(s, event, p, now) {
     default: return false;
   }
   return true;
+}
+
+// A markdown note read or edited, as { key, op }: key is its absolute path (an Obsidian vault is
+// a folder of .md files), or "obsidian:<vault-relative path>" for a note reached through an
+// Obsidian MCP server; op is "r" (read) or "w" (written). null for anything else.
+function noteKey(t, input) {
+  const i = input || {};
+  if (["Read", "Edit", "Write", "MultiEdit"].includes(t)) {
+    const f = i.file_path || "";
+    return /\.md$/i.test(f) && path.isAbsolute(f) ? { key: f, op: t === "Read" ? "r" : "w" } : null;
+  }
+  if (t.startsWith("mcp__") && /obsidian/i.test(t)) {
+    const f = [i.filepath, i.path, i.file, i.filename, i.note].find((v) => typeof v === "string" && v);
+    if (!f || f.includes("..")) return null;
+    const method = t.split("__")[2] || "";
+    return { key: "obsidian:" + f, op: /write|append|patch|update|create|edit|put|replace|insert/i.test(method) ? "w" : "r" };
+  }
+  return null;
+}
+
+// Markdown notes a shell command touches, as [{ key, op }] like noteKey: sessions that work
+// on a vault with cat/sed/grep/tee never call Read or Edit. Paths are resolved against the
+// call's cwd, following the command's own `cd`s and `VAR=value` assignments. A note is written when it is the target of
+// `>`/`>>`, `tee`, `sed -i` or the destination of `cp`/`mv`; read otherwise, and only if it
+// exists (a `*.md` glob or a pattern is not a note). Heredoc bodies are skipped.
+const BASH_NOTES_MAX = 20;
+function bashNotes(cmd, cwd) {
+  if (typeof cmd !== "string" || !/\.md\b/i.test(cmd)) return [];
+  const home = os.homedir();
+  // Drop heredoc bodies: <<EOF ... EOF, <<'EOF', <<-"EOF".
+  cmd = cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, (m) => m.split("\n")[0]);
+  let dir = cwd && path.isAbsolute(cwd) ? cwd : null;
+  const out = new Map(), vars = {};
+  const resolve = (f) => {
+    if (f.startsWith("~/")) return path.join(home, f.slice(2));
+    if (path.isAbsolute(f)) return path.normalize(f);
+    return dir ? path.join(dir, f) : null;
+  };
+  for (const seg of cmd.split(/&&|\|\||[;|\n]/)) {
+    // Words with their quotes removed (`F="a b.md"` is one word), `$VAR`/`${VAR}` replaced
+    // by an earlier `VAR=value` of the command; a word with a variable left is dropped.
+    let words = (seg.match(/(?:"[^"]*"|'[^']*'|[^\s"'])+/g) || []).map((w) => w.replace(/["']/g, ""));
+    while (words.length && /^[A-Za-z_]\w*=/.test(words[0])) {
+      const [, k, v] = words.shift().match(/^(\w+)=(.*)$/);
+      vars[k] = v.replace(/\$\{?(\w+)\}?/g, (m, n) => vars[n] ?? m);
+    }
+    words = words.map((w) => w.replace(/\$\{?(\w+)\}?/g, (m, n) => vars[n] ?? m));
+    if (!words.length) continue;
+    const prog = path.basename(words[0]);
+    if (prog === "cd") {
+      const d = words[1] ? resolve(words[1]) : home;
+      if (d) dir = d;
+      continue;
+    }
+    if (prog === "rm") continue;
+    const inPlace = prog === "sed" && words.some((w) => /^-[a-z]*i/.test(w) || w === "--in-place");
+    const files = [];
+    for (let k = 0; k < words.length; k++) {
+      let w = words[k], redirect = false;
+      const m = w.match(/^\d?>>?(.*)$/);
+      if (m) { redirect = true; w = m[1] || words[++k] || ""; }
+      if (!/\.md$/i.test(w) || /[$*?`{}]/.test(w)) continue;
+      const f = resolve(w);
+      if (f) files.push({ f, w: redirect || prog === "tee" || inPlace });
+    }
+    if ((prog === "cp" || prog === "mv") && files.length) files[files.length - 1].w = true;
+    for (const { f, w } of files) {
+      if (!w && !fs.existsSync(f)) continue;
+      const op = w ? "w" : "r";
+      if (!out.has(f) || op === "w") out.set(f, op);
+    }
+  }
+  return [...out].slice(0, BASH_NOTES_MAX).map(([key, op]) => ({ key, op }));
+}
+
+// Markdown files under root modified at or after `since` (seconds): the notes a shell call
+// wrote through a script (python, node...), which its command line does not tell. Bounded:
+// skips .git, node_modules and hidden dirs, stops after SCAN_MAX entries, never scans $HOME
+// or / themselves (a session started there would walk the whole disk).
+const SCAN_MAX = 3000;
+function modifiedNotes(root, since) {
+  if (!root || !path.isAbsolute(root) || root === "/" || root === os.homedir()) return [];
+  const out = [], stack = [root];
+  let seen = 0;
+  while (stack.length && seen < SCAN_MAX) {
+    const d = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (++seen > SCAN_MAX) break;
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (!e.name.startsWith(".") && e.name !== "node_modules") stack.push(f);
+      } else if (e.isFile() && /\.md$/i.test(e.name)) {
+        try { if (fs.statSync(f).mtimeMs / 1000 >= since) out.push(f); } catch {}
+      }
+    }
+  }
+  return out.slice(0, BASH_NOTES_MAX);
+}
+
+// Records the notes a tool call touches under s.notes[key] = { r, w } (last read, last write).
+function addNote(s, t, input, now, cwd) {
+  const n = noteKey(t, input);
+  const all = t === "Bash" ? bashNotes((input || {}).command, cwd) : n ? [n] : [];
+  for (const e of all) s.notes[e.key] = { ...s.notes[e.key], [e.op]: now };
+  const last = (e) => Math.max(e.r || 0, e.w || 0);
+  s.notes = Object.fromEntries(Object.entries(s.notes)
+    .filter(([, e]) => now - last(e) < NOTES_TTL)
+    .sort(([, a], [, b]) => last(b) - last(a))
+    .slice(0, NOTES_MAX));
 }
 
 function addLinks(s, t, input, now) {
@@ -229,6 +345,7 @@ function update(event, p, sid, file) {
     target: prev.target || "",
     history: prev.history || [],
     links: prev.links || {},
+    notes: prev.notes || {},
     agents: prev.agents || {},
     pending: (prev.pending || []).filter((q) => now - q.ts < PENDING_TTL),
     since: prev.since || now, // when the session's own state last changed
@@ -241,7 +358,10 @@ function update(event, p, sid, file) {
   // touches still count for links with other sessions.
   if (event === "substart" || event === "substop" || (p.agent_id && event !== "prompt" && event !== "stop")) {
     if (!agentEvent(s, event, p, now)) return;
-    if (event === "pre") addLinks(s, p.tool_name || "", p.tool_input, now);
+    if (event === "pre") {
+      addLinks(s, p.tool_name || "", p.tool_input, now);
+      addNote(s, p.tool_name || "", p.tool_input, now, p.cwd);
+    }
     s.agents = pruneAgents(s.agents, now);
     return write(file, s);
   }
@@ -273,6 +393,7 @@ function update(event, p, sid, file) {
       s.timeline.push({ k: d.kind, s: now, ...(id && { id, t, g: d.target }) });
       s.timeline = s.timeline.filter((e) => now - e.s < TIMELINE_TTL).slice(-TIMELINE_MAX);
       addLinks(s, t, p.tool_input, now);
+      addNote(s, t, p.tool_input, now, p.cwd);
       if (t === "Agent" || t === "Task") {
         const i = p.tool_input || {};
         s.pending.push({ type: clip(i.subagent_type || "general-purpose", 40), label: clip(i.description, 40), ts: now });
@@ -281,6 +402,14 @@ function update(event, p, sid, file) {
       break;
     }
     case "post": {
+      // Notes a shell call wrote without naming them (a script): the project's .md files
+      // modified since the call started.
+      const call = id && s.timeline.find((e) => e.id === id);
+      if (call && (p.tool_name || call.t) === "Bash") {
+        for (const f of modifiedNotes(process.env.CLAUDE_PROJECT_DIR || p.cwd, call.s - 1)) {
+          s.notes[f] = { ...s.notes[f], w: now };
+        }
+      }
       // Another call still running (parallel subagents): show it rather than "thinking". It
       // may have left the 10-call history long ago, so its label comes from the timeline.
       const running = s.timeline.filter((e) => e.e === undefined).at(-1);
@@ -318,5 +447,5 @@ if (require.main === module) {
     try { run(event, JSON.parse(raw || "{}")); } catch {}
   });
 } else {
-  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, projectName, pruneAgents, withLock };
+  module.exports = { shortPath, clip, describeTool, tmuxSessions, linkKeys, noteKey, bashNotes, modifiedNotes, projectName, pruneAgents, withLock };
 }

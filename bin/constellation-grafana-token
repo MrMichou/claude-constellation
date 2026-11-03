@@ -1,0 +1,123 @@
+#!/usr/bin/env node
+// Store the Grafana service account token the claude-constellation HUD polls with.
+// Usage: constellation-grafana-token [--clear] [url]
+//
+// Asks for the token (hidden; or reads it from stdin when piped), checks it against <url>/api/org,
+// then stores it with secret-tool (service=claude-constellation-grafana server=<url>), where the
+// HUD's poll reads it: it is never written to a file or put on a command line. --clear removes it
+// (anonymous access). The url defaults to GRAFANA_URL, then the one in
+// ~/.config/claude-constellation/grafana.conf. A Viewer service account is enough.
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawn } = require("child_process");
+
+const SERVICE = "claude-constellation-grafana";
+// Overridable for tests.
+const SECRET_TOOL = process.env.CONSTELLATION_SECRET_TOOL || "secret-tool";
+
+function die(msg) {
+  console.error(`constellation-grafana-token: ${msg}`);
+  process.exit(1);
+}
+
+function configUrl() {
+  const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  let text = "";
+  try { text = fs.readFileSync(path.join(dir, "claude-constellation", "grafana.conf"), "utf8"); } catch {}
+  for (const line of text.split("\n")) {
+    if (/^\s*\[/.test(line)) break; // graph sections follow the global keys
+    const m = line.match(/^\s*url\s*=\s*(.*?)(\s+#.*)?\s*$/);
+    if (m) return m[1].replace(/^"(.*)"$/, "$1");
+  }
+  return "";
+}
+
+function run(cmd, args, input) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (err) => resolve({ code: -1, stdout, stderr: String(err.message) }));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(input || "");
+  });
+}
+
+// The token from a hidden prompt, or stdin when it isn't a terminal.
+function readToken() {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    if (!stdin.isTTY) {
+      let data = "";
+      stdin.setEncoding("utf8");
+      stdin.on("data", (d) => (data += d));
+      stdin.on("end", () => resolve(data.trim()));
+      return;
+    }
+    process.stdout.write("Grafana service account token: ");
+    stdin.setRawMode(true);
+    stdin.setEncoding("utf8");
+    let token = "";
+    stdin.on("data", (chunk) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") {
+          stdin.setRawMode(false); stdin.pause(); process.stdout.write("\n");
+          return resolve(token.trim());
+        }
+        if (ch === "\x03") { stdin.setRawMode(false); process.stdout.write("\n"); process.exit(130); }
+        if (ch === "\x7f" || ch === "\b") token = token.slice(0, -1);
+        else token += ch;
+      }
+    });
+  });
+}
+
+async function refresh() {
+  // Have the running Awesome poll again now rather than at its next interval.
+  await run("awesome-client", [
+    "local ok, cc = pcall(require, 'ui.desktop.claude_constellation')\n"
+    + "if ok and cc.grafana_refresh then cc.grafana_refresh() end",
+  ]);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes("-h") || args.includes("--help")) {
+    console.log("Store the Grafana token the HUD polls with.\nUsage: constellation-grafana-token [--clear] [url]");
+    return;
+  }
+  const clear = args.includes("--clear");
+  const base = (args.find((a) => !a.startsWith("--")) || process.env.GRAFANA_URL || configUrl()).replace(/\/+$/, "");
+  if (!base) die("no Grafana url: pass one, or set url = … in ~/.config/claude-constellation/grafana.conf");
+  if (!/^https?:\/\//.test(base)) die(`not an http(s) url: ${base}`);
+
+  if (clear) {
+    const r = await run(SECRET_TOOL, ["clear", "service", SERVICE, "server", base]);
+    if (r.code !== 0) die(`could not clear the token with ${SECRET_TOOL}: ${r.stderr.trim()}`);
+    console.log(`Removed the token for ${base}.`);
+    await refresh();
+    return;
+  }
+
+  const token = await readToken();
+  if (!token) die("no token given");
+
+  // The token goes to curl on stdin, never on its command line.
+  const check = await run("curl", ["-sS", "-f", "--max-time", "15", "-H", "@-", "-H", "Accept: application/json",
+    base + "/api/org"], `Authorization: Bearer ${token}\n`);
+  if (/returned error: 40[13]/.test(check.stderr)) die(`${base} refused the token`);
+  let org = null;
+  try { org = JSON.parse(check.stdout).name; } catch {}
+  if (check.code !== 0) console.error(`Could not check the token (${check.stderr.trim() || `curl exited ${check.code}`}); storing it anyway.`);
+
+  const stored = await run(SECRET_TOOL, ["store", "--label=Grafana token (claude-constellation)",
+    "service", SERVICE, "server", base], token);
+  if (stored.code !== 0) die(`could not store the token with ${SECRET_TOOL}: ${stored.stderr.trim()}`);
+  console.log(`Token stored for ${base}${org ? ` (org ${org})` : ""}.`);
+  await refresh();
+}
+
+main().catch((err) => die(err.message));

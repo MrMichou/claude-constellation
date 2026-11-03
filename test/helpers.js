@@ -24,10 +24,13 @@ export function tmpHome() {
 }
 
 // Run a node script with argv, a stdin payload (object -> JSON) and HOME=home.
-export function runNode(script, args, { home, stdin = "" } = {}) {
+// CLAUDE_PROJECT_DIR is dropped (tests run from a Claude session would inherit it) unless
+// passed in `env`.
+export function runNode(script, args, { home, stdin = "", env = {} } = {}) {
   return new Promise((resolve, reject) => {
+    const { CLAUDE_PROJECT_DIR, ...base } = process.env;
     const child = spawn(process.execPath, [script, ...args], {
-      env: { ...process.env, HOME: home },
+      env: { ...base, HOME: home, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "", stderr = "";

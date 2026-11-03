@@ -13,6 +13,8 @@ describe("render.lua", function()
     data, power, registry, proc = H.tmpdir(), H.tmpdir(), H.tmpdir(), H.tmpdir()
     R = H.renderer()
     R.set_dirs(data, power, registry, proc)
+    -- No Obsidian vault unless a spec sets one up (never the user's own).
+    R.obsidian.CONF, R.obsidian.OBSIDIAN_JSON = data .. "none.conf", data .. "none.json"
   end)
 
   after_each(function()
@@ -526,7 +528,7 @@ describe("render.lua", function()
 
     it("lists the layouts, constellation first", function()
       assert.are.same({ "constellation", "lanes", "cards", "resources", "kanban", "radar", "strip", "hud",
-        "popup", "zen", "treemap", "flow", "tree" }, R.LAYOUTS)
+        "popup", "zen", "treemap", "flow", "tree", "obsi-constellation" }, R.LAYOUTS)
     end)
 
     it("kanban, strip, hud and popup put the session that needs you first", function()

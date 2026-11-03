@@ -41,6 +41,18 @@ Four more show where the work goes:
 - **flow**: a Sankey diagram of the last 30 minutes, sessions feeding the kinds of tool they called (band width = number of calls), and each kind feeding the resources it touched. A pulse runs along the band of each running call.
 - **tree**: an icicle chart read left to right, each session split into its own calls and its subagents, each split into the targets they last touched.
 
+And one for your second brain:
+
+- **obsi-constellation**: your [Obsidian](https://obsidian.md) vault as its graph view draws it, every note a dot and every `[[link]]` a faint line, settling into place on screen. The notes the sessions read light up in blue, the ones they edit in purple with a ring, both dimming over 30 minutes, with their name and their linked neighbours named. Each session's trail joins the notes it consulted in the order it went through them (the latest step brightest, a comet running along it on each new note), and the sessions sit around the brain, beaming at their latest note. On the lock screen, note names and the vault's name are hidden.
+
+  The vault shown is the one the sessions touched last, else the one open in Obsidian (read from `~/.config/obsidian/obsidian.json`). To pick vaults yourself, list them in `~/.config/claude-constellation/obsidian.conf`:
+
+  ```ini
+  vault = ~/notes/brain   # repeat the line for more
+  ```
+
+  The hook records every `.md` file a session reads or edits: through Read/Edit/Write, through the shell (`cat`, `sed`, `grep`, `>`, `tee`, `sed -i`, `cp`/`mv`…), as written when a shell call's script modified it (the project's `.md` files changed during the call), and the notes an Obsidian MCP server reads or writes, by their path in the vault; the vault's files are listed again every 30 seconds while the layout is shown, and only changed notes are read.
+
 Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pending permission, then a question waiting for an answer, then working, done, and asleep (no activity for 10 minutes).
 
 ### Settings menu
@@ -49,7 +61,7 @@ Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pen
 constellation-menu
 ```
 
-One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
+One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in), Grafana (poll now, token) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
 
 ```
   ✦ Claude constellation
@@ -60,6 +72,8 @@ One terminal menu for every setting below: the layer on/off, the layout, eco mod
     Rendering   ‹ auto ›           1/3    the GPU if there is one (in use: gpu)
     Promview    Poll now                  https://promview.example · desktop auto
                 Sign in…                  OIDC sign-in in your browser
+    Grafana     Poll now                  https://grafana.example
+                Set token…                service account token, kept in the keyring
     Lock screen Lock now                  xsecurelock on the constellation
                 Quit
 ```
@@ -72,7 +86,7 @@ From a terminal, or any script:
 constellation-layout            # next layout (same as `next`)
 constellation-layout prev
 constellation-layout kanban     # constellation, lanes, cards, resources, kanban, radar, strip, hud, popup,
-                                # zen, treemap, flow, tree
+                                # zen, treemap, flow, tree, obsi-constellation
 ```
 
 `install.js` links the command (and `constellation-menu`, and `constellation-eco`, see [How it works](#how-it-works)) into `~/.local/bin`; it talks to the running Awesome through `awesome-client`. A notification shows the new layout.
@@ -148,6 +162,47 @@ desktop = on     # auto (default: the desktop if it runs, else url) | on (deskto
 
 The `match` and `limit` lines apply the same way. While the desktop is pushing changes the poll interval stretches to a slow fallback (at least two minutes). The desktop needs the interface from its version after 0.1.0-beta.4 (`org.promview.Desktop`, read-only); an older client doesn't offer it and the HUD keeps polling.
 
+### Grafana graphs in the HUD
+
+The hud layout can also show small graphs of queries run through [Grafana](https://grafana.com/): with the Promview board they sit in its header, right of the alert counts, above the alert cards; without Promview they fill the board, larger, with their min and max. Each card shows the query's latest value and a sparkline of the window (the first series filled, up to three more as thin lines), and its colour follows the thresholds: yellow past `warn`, red (pulsing bar) past `crit`. A `crit` below `warn` means lower is worse (free space, replicas up).
+
+One section per graph in `~/.config/claude-constellation/grafana.conf`:
+
+```ini
+url = https://grafana.example
+interval = 60        # seconds between polls (at least 15)
+range = 1h           # window shown: 30m, 6h, 1d…
+points = 60          # points per graph (maxDataPoints, at most 500)
+
+[CPU api]
+datasource = P1809F7CD0C75ACF3   # the datasource uid (Connections → Data sources, in its URL)
+expr = sum(rate(container_cpu_usage_seconds_total{app="api"}[5m])) * 100
+unit = %             # optional suffix
+warn = 70            # optional thresholds
+crit = 90
+
+[Disk free /data]
+datasource = P1809F7CD0C75ACF3
+expr = 100 * node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"}
+legend = {{instance}}  # optional series name, from its labels
+unit = %
+warn = 20
+crit = 10
+```
+
+`GRAFANA_URL` in Awesome's environment overrides `url`. All graphs go in one `POST /api/ds/query` request, run with `curl` in the background every `interval` seconds, only while the hud is the layout and the layer is shown. If a poll fails, the last graphs stay on screen, dimmed, under "unreachable"; a query that fails shows its error on its own card. On `expr` lines, `#` is part of the query, not a comment.
+
+A Grafana with anonymous access needs nothing more. Otherwise, create a service account with the Viewer role and a token for it, then:
+
+```sh
+constellation-grafana-token        # or: constellation-grafana-token https://grafana.example
+constellation-grafana-token --clear
+```
+
+It asks for the token (hidden), checks it against the server and stores it in your keyring with `secret-tool` (`service claude-constellation-grafana server <url>`), then asks Awesome to poll again. Each poll looks the token up and hands it to `curl` on stdin. `constellation-menu` has the same two actions on its Grafana line.
+
+The lock screen shows the same graphs, through `~/.cache/claude-constellation/grafana.json`; graphs older than 5 minutes there are dimmed.
+
 ## How it works
 
 - `hooks/track.js` is a Claude Code hook. It runs from `SessionStart` (the session shows up idle before its first prompt) and writes `~/.claude/constellation/<session_id>.json` (state, tool, target, history, a 30-minute timeline of tool calls, subagents) and deletes the file on `SessionEnd`. Subagents come from `SubagentStart`/`SubagentStop` and from the `agent_id` that tool events carry when a subagent runs them, so their calls never show up as the session's own.
@@ -171,7 +226,7 @@ The `match` and `limit` lines apply the same way. While the desktop is pushing c
 ## Installation
 
 ```sh
-node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-layout and constellation-promview-login commands
+node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-* commands
 # then in ~/.config/awesome/rc.lua, after beautiful.init(...) but BEFORE require("ui")
 # (otherwise the desktop layer covers the bar):
 #   pcall(require, "ui.desktop.claude_constellation")

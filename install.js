@@ -2,7 +2,8 @@
 // Installs claude-constellation:
 //  - merges the tracking hooks into ~/.claude/settings.json (idempotent, backup kept)
 //  - symlinks the AwesomeWM module to ~/.config/awesome/ui/desktop/claude_constellation
-//  - symlinks the `constellation-layout`, `-eco`, `-menu` and `-promview-login` commands to ~/.local/bin
+//  - symlinks the `constellation-layout`, `-eco`, `-menu`, `-promview-login` and `-grafana-token`
+//    commands to ~/.local/bin
 // Usage: node install.js [--uninstall]
 
 const fs = require("fs");
@@ -21,6 +22,7 @@ const COMMANDS = {
   "constellation-eco": "eco mode: constellation-eco [toggle|on|off|auto]",
   "constellation-menu": "terminal menu for every setting",
   "constellation-promview-login": "sign the HUD in to an OIDC Promview",
+  "constellation-grafana-token": "store the Grafana token for the HUD's graphs",
 };
 
 const EVENTS = {

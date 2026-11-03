@@ -1,10 +1,12 @@
 // Unit tests for the pure helpers of hooks/track.js (exported when the file is required).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import { createRequire } from "node:module";
 import { TRACK } from "./helpers.js";
 
-const { shortPath, clip, describeTool, tmuxSessions, linkKeys } = createRequire(import.meta.url)(TRACK);
+const { shortPath, clip, describeTool, tmuxSessions, linkKeys, noteKey, bashNotes } = createRequire(import.meta.url)(TRACK);
 
 describe("shortPath", () => {
   it("keeps short paths and abbreviates $HOME", () => {
@@ -98,5 +100,69 @@ describe("linkKeys", () => {
     expect(linkKeys("Bash", { command: "ls -la" })).toEqual([]);
     expect(linkKeys("Read", {})).toEqual([]);
     expect(linkKeys("Bash", undefined)).toEqual([]);
+  });
+});
+
+describe("noteKey", () => {
+  it("keys a markdown note read or written by its absolute path", () => {
+    expect(noteKey("Read", { file_path: "/v/Ideas/Brain.md" })).toEqual({ key: "/v/Ideas/Brain.md", op: "r" });
+    for (const t of ["Edit", "Write", "MultiEdit"]) {
+      expect(noteKey(t, { file_path: "/v/Brain.md" })).toEqual({ key: "/v/Brain.md", op: "w" });
+    }
+  });
+
+  it("ignores other files, relative paths and other tools", () => {
+    expect(noteKey("Read", { file_path: "/v/app.js" })).toBeNull();
+    expect(noteKey("Read", { file_path: "notes/a.md" })).toBeNull();
+    expect(noteKey("Bash", { command: "cat /v/a.md" })).toBeNull();
+  });
+
+  it("keys a note reached through an Obsidian MCP server by its vault path", () => {
+    expect(noteKey("mcp__obsidian__obsidian_get_file_contents", { filepath: "Ideas/Brain.md" }))
+      .toEqual({ key: "obsidian:Ideas/Brain.md", op: "r" });
+    expect(noteKey("mcp__obsidian__obsidian_append_content", { filepath: "Log.md" }))
+      .toEqual({ key: "obsidian:Log.md", op: "w" });
+    expect(noteKey("mcp__obsidian__obsidian_get_file_contents", { filepath: "../etc/passwd" })).toBeNull();
+    expect(noteKey("mcp__github__get_file", { path: "README.md" })).toBeNull();
+  });
+});
+
+describe("bashNotes", () => {
+  let v;
+  beforeEach(() => {
+    v = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+    fs.mkdirSync(path.join(v, "wiki"));
+    for (const f of ["hot.md", "wiki/A.md", "wiki/B.md"]) fs.writeFileSync(path.join(v, f), "x");
+  });
+  afterEach(() => fs.rmSync(v, { recursive: true, force: true }));
+
+  it("reads notes named by a command, relative to its cwd and its own cd", () => {
+    expect(bashNotes("sed -n 12,200p hot.md", v)).toEqual([{ key: path.join(v, "hot.md"), op: "r" }]);
+    expect(bashNotes(`cd ${v}/wiki && grep -n foo A.md B.md`, "/elsewhere")).toEqual([
+      { key: path.join(v, "wiki/A.md"), op: "r" }, { key: path.join(v, "wiki/B.md"), op: "r" }]);
+  });
+
+  it("follows ../ paths and VAR=value assignments", () => {
+    expect(bashNotes("grep -n x ../hot.md", path.join(v, "wiki"))).toEqual([{ key: path.join(v, "hot.md"), op: "r" }]);
+    fs.writeFileSync(path.join(v, "wiki/Suivi — 29 octobre.md"), "x");
+    expect(bashNotes(`cd wiki && F="Suivi — 29 octobre.md"; wc -l "$F"; head -30 "\${F}"`, v))
+      .toEqual([{ key: path.join(v, "wiki/Suivi — 29 octobre.md"), op: "r" }]);
+    expect(bashNotes("D=wiki; cat $D/A.md", v)).toEqual([{ key: path.join(v, "wiki/A.md"), op: "r" }]);
+  });
+
+  it("marks redirect, tee, sed -i and cp/mv destinations as written", () => {
+    expect(bashNotes("cat > wiki/New.md <<'EOF'\nsee Other.md\nEOF", v))
+      .toEqual([{ key: path.join(v, "wiki/New.md"), op: "w" }]);
+    expect(bashNotes("echo x >> hot.md", v)).toEqual([{ key: path.join(v, "hot.md"), op: "w" }]);
+    expect(bashNotes("echo x | tee wiki/C.md", v)).toEqual([{ key: path.join(v, "wiki/C.md"), op: "w" }]);
+    expect(bashNotes("sed -i 's/a/b/' hot.md", v)).toEqual([{ key: path.join(v, "hot.md"), op: "w" }]);
+    expect(bashNotes("cp wiki/A.md wiki/D.md", v)).toEqual([
+      { key: path.join(v, "wiki/A.md"), op: "r" }, { key: path.join(v, "wiki/D.md"), op: "w" }]);
+  });
+
+  it("ignores globs, variables, missing files, rm and commands without notes", () => {
+    expect(bashNotes("ls *.md; cat $F.md; cat gone.md; rm hot.md", v)).toEqual([]);
+    expect(bashNotes("cargo test", v)).toEqual([]);
+    expect(bashNotes("cat hot.md", undefined)).toEqual([]);
   });
 });
