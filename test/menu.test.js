@@ -56,7 +56,7 @@ describe("constellation-menu", () => {
   });
 
   it("switches the layer, eco mode and backend", async () => {
-    await menu(`${RIGHT}${DOWN}${DOWN}${RIGHT}${DOWN}${LEFT}q`);
+    await menu(`${RIGHT}${DOWN}${DOWN}${DOWN}${RIGHT}${DOWN}${LEFT}q`);
     const all = calls().join("\n");
     expect(all).toContain("cc.set_off('off')");
     expect(all).toContain("cc.set_eco('on')");
@@ -64,11 +64,40 @@ describe("constellation-menu", () => {
   });
 
   it("polls Promview and Grafana and locks the screen from their lines", async () => {
-    await menu(`5\r7\r9\r`);
+    await menu(`6\r8\r${DOWN}${DOWN}\r`);
     const all = calls().join("\n");
     expect(all).toContain("cc.promview_refresh()");
     expect(all).toContain("cc.grafana_refresh()");
     expect(all).toContain("cc.lock()");
+  });
+
+  it("leaves the disabled layouts out of the Layout line", async () => {
+    setAnswer("kanban|false|auto|false|auto|gpu|constellation,lanes,kanban,zen|lanes,zen|true");
+    await menu(`${DOWN}${RIGHT}q`);
+    await menu(`${DOWN}${LEFT}q`);
+    const sets = calls().map((c) => c.match(/cc\.set_layout\('(\w+)'\)/)?.[1]).filter(Boolean);
+    expect(sets).toEqual(["constellation", "constellation"]);
+  });
+
+  it("enables and disables layouts from the checklist, then goes back to the menu", async () => {
+    setAnswer("kanban|false|auto|false|auto|gpu|constellation,lanes,kanban,zen|zen|true");
+    // opens on kanban (shown now): disable it, then down to zen and enable it, back, quit
+    const r = await menu(`3\r ${DOWN}\rqq`);
+    expect(r.code).toBe(0);
+    const all = calls().join("\n");
+    expect(all).toContain("cc.set_layout_enabled('kanban', false)");
+    expect(all).toContain("cc.set_layout_enabled('zen', true)");
+  });
+
+  it("won't disable the last enabled layout", async () => {
+    setAnswer("kanban|false|auto|false|auto|gpu|constellation,lanes,kanban|constellation,lanes|true");
+    await menu(`3\r qq`);
+    expect(calls().join("\n")).not.toContain("cc.set_layout_enabled(");
+  });
+
+  it("doesn't open the checklist with a module too old for it", async () => {
+    await menu(`3\r q`);
+    expect(calls().join("\n")).not.toContain("cc.set_layout_enabled(");
   });
 
   it("wraps from the first line to Quit", async () => {

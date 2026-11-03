@@ -39,6 +39,7 @@ local static = false
 -- Eco mode: the choice ("auto", "on", "off"; see set_eco) and whether it is on right now.
 local eco_choice, eco = R.read_eco(), false
 local layout = R.read_layout() -- one of R.LAYOUTS; see set_layout()
+local hidden_layouts = R.read_hidden_layouts() -- skipped by next/prev; see set_layout_enabled()
 
 -- Render backend: the choice ("auto", "gpu", "cpu"; see set_backend) and the one in use.
 -- "auto" uses the GPU when there is one, rechecked every second; a GPU frame that fails
@@ -328,14 +329,19 @@ local function lock()
   awful.spawn(cmd)
 end
 
--- Switch the presentation: a layout name, or "next" / "prev" to cycle through R.LAYOUTS.
+-- Switch the presentation: a layout name, or "next" / "prev" to cycle through R.LAYOUTS,
+-- skipping the disabled ones (set_layout_enabled); a disabled layout can still be picked by name.
 -- The choice is kept for the next start and for the lock screen; picking one while the layer
 -- is off switches it back on. Returns the layout shown.
 local function set_layout(name)
   local list, i = R.LAYOUTS, 1
   for j, l in ipairs(list) do if l == layout then i = j end end
-  if name == "next" or name == nil then name = list[i % #list + 1]
-  elseif name == "prev" then name = list[(i - 2) % #list + 1] end
+  if name == "next" or name == nil or name == "prev" then
+    local dir = name == "prev" and -1 or 1
+    local j = i
+    repeat j = (j - 1 + dir) % #list + 1 until not hidden_layouts[list[j]] or j == i
+    name = list[j]
+  end
   local known = false
   for _, l in ipairs(list) do if l == name then known = true end end
   if not known then return layout end
@@ -347,6 +353,29 @@ local function set_layout(name)
   redraw()
   notify("Layout: " .. name)
   return layout
+end
+
+-- Enable or disable a layout in next/prev (and in constellation-menu's Layout line); on is true,
+-- false or "toggle". The last enabled layout can't be disabled; disabling the one shown moves on to
+-- the next. Kept across restarts. Returns the disabled layouts as a list, in R.LAYOUTS order.
+local function hidden_list()
+  local out = {}
+  for _, l in ipairs(R.LAYOUTS) do if hidden_layouts[l] then out[#out + 1] = l end end
+  return out
+end
+local function set_layout_enabled(name, on)
+  local known = false
+  for _, l in ipairs(R.LAYOUTS) do if l == name then known = true end end
+  if not known then return hidden_list() end
+  if on == "toggle" then on = hidden_layouts[name] == true end
+  if not on and #hidden_list() >= #R.LAYOUTS - 1 and not hidden_layouts[name] then
+    notify("Layouts: keeping " .. name .. ", the last one enabled")
+    return hidden_list()
+  end
+  hidden_layouts[name] = (not on) or nil
+  R.write_hidden_layouts(hidden_layouts)
+  if not on and layout == name then set_layout("next") end
+  return hidden_list()
 end
 
 -- Pick the render backend: "auto" (the GPU if there is one, else the CPU), "gpu" or "cpu".
@@ -388,6 +417,8 @@ return {
   set_eco = set_eco,
   eco = function() return eco_choice, eco end,
   layouts = R.LAYOUTS,
+  set_layout_enabled = set_layout_enabled,
+  hidden_layouts = hidden_list,
   set_backend = set_backend,
   backend = function() return backend_choice, backend end,
   lock = lock,
