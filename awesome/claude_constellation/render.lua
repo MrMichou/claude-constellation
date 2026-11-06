@@ -672,10 +672,10 @@ function K.layer(cr, w, h, f, key, draw)
     local was, was_backend = bold, backend
     bold = nil; K.bold(lc, false) -- a fresh context starts with the default font
     if layer.img then backend = "cpu" end -- glows and sprites cached for an image target
-    local ok, err = pcall(draw, lc)
+    local drawn, err = pcall(draw, lc)
     backend = was_backend
     bold = nil; K.bold(cr, was)
-    if not ok then error(err, 0) end
+    if not drawn then error(err, 0) end
     if layer.img then
       layer.img:flush()
       local uc = cairo.Context(layer.surf)
