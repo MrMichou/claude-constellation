@@ -1,0 +1,20 @@
+#!/bin/sh
+# Lock the screen on the animated Claude constellation (xsecurelock + saver.lua), from any X11 WM.
+# Usage: constellation-lock   (or as the locker of xss-lock: xss-lock -l -- constellation-lock)
+set -eu
+case "${1:-}" in
+  -h|--help) sed -n '2,3s/^# //p' "$0"; exit 0 ;;
+esac
+# This file is usually a symlink in ~/.local/bin: find the checkout it points into.
+self=$(readlink -f "$0")
+saver="${self%/bin/*}/awesome/claude_constellation/saver.lua"
+if ! command -v xsecurelock >/dev/null 2>&1; then
+  echo "constellation-lock: xsecurelock is not installed (pacman -S xsecurelock)" >&2
+  exit 1
+fi
+if [ ! -x "$saver" ]; then
+  echo "constellation-lock: saver not found at $saver" >&2
+  exit 1
+fi
+# exec keeps xss-lock's XSS_SLEEP_LOCK_FD, so suspend waits for the lock to be up.
+XSECURELOCK_SAVER="$saver" exec xsecurelock

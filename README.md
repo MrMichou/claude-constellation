@@ -228,6 +228,21 @@ The lock screen shows the same graphs, through `~/.cache/claude-constellation/gr
 
 ## Installation
 
+### On Arch Linux
+
+Two scripts install the packages with `pacman` (through `sudo`), then run `install.js` for you:
+
+```sh
+./install-arch.sh             # everything: wallpaper layer in AwesomeWM, commands, hooks, lock screen
+./install-arch-lock.sh        # only the animated lock screen, for any X11 window manager
+```
+
+`install-arch.sh` installs `awesome nodejs xsecurelock gtk3 curl libsecret` (and cairo, gdk-pixbuf2), links everything, and adds `pcall(require, "ui.desktop.claude_constellation")` to `~/.config/awesome/rc.lua`, before `require("ui")` if there is one, else right after `beautiful.init(...)` (backup in `rc.lua.bak-constellation`). Then restart Awesome, or pass `--restart`. Other options: `--no-deps` (skip pacman), `--no-rc` (leave `rc.lua` alone), `--uninstall` (hooks, links, commands and the `rc.lua` line it added; the packages stay).
+
+`install-arch-lock.sh` needs no Awesome: it installs `nodejs xsecurelock gtk3 lua54 lua54-lgi`, the hooks and one command, `constellation-lock`, which locks the screen through xsecurelock on the animated constellation (private mode, as below). Bind it to a key in your window manager, and to lock on idle and before suspend, start `xss-lock -l -- constellation-lock` with your session (`pacman -S xss-lock`). It takes the same `--no-deps` and `--uninstall`. Without Awesome, the lock screen uses the default palette, the `constellation` layout and eco `auto`.
+
+### By hand
+
 ```sh
 node install.js            # hooks in ~/.claude/settings.json, module symlink, constellation-* commands
 # then in ~/.config/awesome/rc.lua, after beautiful.init(...) but BEFORE require("ui")
@@ -242,7 +257,7 @@ Only one checkout should be installed at a time. Before installing from another 
 
 ### Animated lock screen (xsecurelock)
 
-`lock()` locks the screen on the animated constellation through [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`): `saver.lua` (Lua + lgi; it re-executes itself under the first of lua5.4, lua5.3, lua5.5, lua, luajit, lua5.1 that can load lgi, since on Arch `lua53-lgi` pairs with AwesomeWM) draws into the lock window with the same engine (`render.lua`) as the wallpaper, in private mode (no paths, commands or current tool, since anyone can see a locked screen) and with the same battery rule. xsecurelock stays in charge of authentication: if the saver crashes, the screen stays locked. Without xsecurelock, `lock()` falls back to a still image for i3lock (`snapshot(path, private)`).
+`lock()` locks the screen on the animated constellation through [xsecurelock](https://github.com/google/xsecurelock) (`pacman -S xsecurelock`): `saver.lua` (Lua + lgi; it re-executes itself under the first of lua5.4, lua5.3, lua5.5, lua, luajit, lua5.1 that can load lgi, since on Arch `lua53-lgi` pairs with AwesomeWM) draws into the lock window with the same engine (`render.lua`) as the wallpaper, in private mode (no paths, commands or current tool, since anyone can see a locked screen) and with the same battery rule. xsecurelock stays in charge of authentication: if the saver crashes, the screen stays locked. `constellation-lock` does the same from a terminal or from any other window manager. Without xsecurelock, `lock()` falls back to a still image for i3lock (`snapshot(path, private)`).
 
 ![Lock screen: the same constellation, without labels](docs/lock.gif)
 

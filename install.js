@@ -2,9 +2,11 @@
 // Installs claude-constellation:
 //  - merges the tracking hooks into ~/.claude/settings.json (idempotent, backup kept)
 //  - symlinks the AwesomeWM module to ~/.config/awesome/ui/desktop/claude_constellation
-//  - symlinks the `constellation-layout`, `-eco`, `-menu`, `-promview-login` and `-grafana-token`
-//    commands to ~/.local/bin
-// Usage: node install.js [--uninstall]
+//  - symlinks the `constellation-layout`, `-eco`, `-menu`, `-promview-login`, `-grafana-token`
+//    and `-lock` commands to ~/.local/bin
+// Usage: node install.js [--lock-only] [--uninstall]
+//  --lock-only: just the hooks and `constellation-lock`, for the lock screen without AwesomeWM
+//  (leaves an Awesome module link or other commands already installed alone).
 
 const fs = require("fs");
 const os = require("os");
@@ -12,6 +14,7 @@ const path = require("path");
 
 const home = os.homedir();
 const uninstall = process.argv.includes("--uninstall");
+const lockOnly = !uninstall && process.argv.includes("--lock-only");
 const track = path.join(__dirname, "hooks", "track.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const linkDir = path.join(home, ".config", "awesome", "ui", "desktop");
@@ -23,7 +26,9 @@ const COMMANDS = {
   "constellation-menu": "terminal menu for every setting",
   "constellation-promview-login": "sign the HUD in to an OIDC Promview",
   "constellation-grafana-token": "store the Grafana token for the HUD's graphs",
+  "constellation-lock": "lock the screen on the animated constellation (xsecurelock)",
 };
+const LOCK_COMMANDS = new Set(["constellation-lock"]);
 
 const EVENTS = {
   SessionStart: "start",
@@ -70,8 +75,8 @@ for (const [evt, arg] of Object.entries(EVENTS)) {
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log(`${uninstall ? "Removed" : "Installed"} hooks in ${settingsPath}`);
 
-fs.rmSync(link, { force: true });
-if (!uninstall) {
+if (!lockOnly) fs.rmSync(link, { force: true });
+if (!uninstall && !lockOnly) {
   fs.mkdirSync(linkDir, { recursive: true });
   fs.symlinkSync(path.join(__dirname, "awesome", "claude_constellation"), link);
   console.log(`Linked ${link}`);
@@ -80,6 +85,7 @@ if (!uninstall) {
 
 // A command link is only replaced or removed when it is ours: never clobber another tool.
 for (const [name, help] of Object.entries(COMMANDS)) {
+  if (lockOnly && !LOCK_COMMANDS.has(name)) continue;
   const cmd = path.join(__dirname, "bin", name);
   const cmdLink = path.join(home, ".local", "bin", name);
   let cmdTarget = null;

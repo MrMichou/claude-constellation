@@ -89,12 +89,29 @@ describe("install.js", () => {
       expect(exists(cmdLink(name))).toBe(false);
     });
 
-  it.each(["constellation-promview-login", "constellation-grafana-token"])("links %s too, and removes it", async (name) => {
+  it.each(["constellation-promview-login", "constellation-grafana-token", "constellation-lock"])("links %s too, and removes it", async (name) => {
     const login = path.join(h.home, ".local", "bin", name);
     await install();
     expect(fs.readlinkSync(login)).toBe(path.join(ROOT, "bin", name));
     await install("--uninstall");
     expect(exists(login)).toBe(false);
+  });
+
+  it("--lock-only installs the hooks and constellation-lock, nothing for Awesome", async () => {
+    const r = await install("--lock-only");
+    expect(r.code).toBe(0);
+    const hooks = readJson(h.settings).hooks;
+    for (const evt of EVENTS) expect(ours(hooks[evt])).toHaveLength(1);
+    expect(fs.readlinkSync(cmdLink("constellation-lock"))).toBe(path.join(ROOT, "bin", "constellation-lock"));
+    expect(exists(link())).toBe(false);
+    expect(exists(cmdLink("constellation-layout"))).toBe(false);
+  });
+
+  it("--lock-only leaves a full install's module link and commands alone", async () => {
+    await install();
+    await install("--lock-only");
+    expect(exists(link())).toBe(true);
+    expect(exists(cmdLink("constellation-menu"))).toBe(true);
   });
 
   it("leaves an unrelated constellation-layout command alone", async () => {
