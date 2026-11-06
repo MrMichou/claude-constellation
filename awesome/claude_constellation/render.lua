@@ -65,7 +65,10 @@ function R.set_dirs(data_dir, power_dir, registry_dir, proc_dir, drm_dir)
   PROC_DIR = proc_dir or PROC_DIR
   DRM_DIR = drm_dir or DRM_DIR
 end
-function R.set_cache_dir(dir) R.CACHE_DIR = dir end
+function R.set_cache_dir(dir)
+  R.CACHE_DIR = dir
+  if R.obsidian then R.obsidian.PIN = dir .. "obsidian-vault" end
+end
 
 -- "#rgb", "#rrggbb" or "#rrggbbaa" -> {r, g, b} in 0..1; nil if unparsable.
 local function rgb(hex)
@@ -972,6 +975,7 @@ R.LAYOUTS = { "constellation", "lanes", "cards", "resources", "kanban", "radar",
   "zen", "treemap", "flow", "tree", "obsi-constellation" }
 -- Obsidian vaults and their graph, for the obsi-constellation layout (paths overridable for specs).
 R.obsidian = dofile(DIR .. "obsidian.lua")
+R.obsidian.PIN = R.CACHE_DIR .. "obsidian-vault" -- the vault picked in constellation-menu
 K.obsidian = R.obsidian
 local layouts = {}
 for _, name in ipairs(R.LAYOUTS) do layouts[name] = dofile(DIR .. "layouts/" .. name .. ".lua") end

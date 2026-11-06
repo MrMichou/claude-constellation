@@ -12,6 +12,28 @@ describe("obsidian.lua", function()
   end)
   after_each(function() H.rmrf(dir) end)
 
+  describe("pinned vault", function()
+    it("is auto with no file, and kept across reads once pinned", function()
+      O.PIN = dir .. "obsidian-vault"
+      assert.is_nil(O.pinned())
+      local gen = O.pin_gen
+      assert.is_true(O.set_pinned("/home/me/work/"))
+      assert.are.equal("/home/me/work", O.pinned())
+      assert.are.equal(gen + 1, O.pin_gen)
+      O.set_pinned(nil)
+      assert.is_nil(O.pinned())
+    end)
+
+    it("shows the pinned vault while it is one, else the one touched last, else the first", function()
+      local list = { "/v/a", "/v/b", "/v/c" }
+      assert.are.equal("/v/c", O.pick(list, "/v/b", "/v/c"))
+      assert.are.equal("/v/b", O.pick(list, "/v/b", "/v/gone"))
+      assert.are.equal("/v/b", O.pick(list, "/v/b", nil))
+      assert.are.equal("/v/a", O.pick(list, nil, nil))
+      assert.is_nil(O.pick({}, nil, "/v/a"))
+    end)
+  end)
+
   describe("vaults", function()
     it("lists Obsidian's vaults, the open one first, then the most recent", function()
       H.write(O.OBSIDIAN_JSON, H.encode({ vaults = {
