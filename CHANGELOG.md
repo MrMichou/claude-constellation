@@ -7,6 +7,8 @@ All notable changes to claude-constellation are documented here. This project fo
 ## [Unreleased]
 
 ### Added
+- **Arch Linux installers**: `./install-arch.sh` installs the packages with pacman, runs `install.js` and adds the module to `rc.lua` (`--no-deps`, `--no-rc`, `--restart`, `--uninstall`); `./install-arch-lock.sh` installs only the animated lock screen, for any X11 window manager.
+- **`constellation-lock`**: locks the screen on the animated constellation through xsecurelock without going through Awesome, e.g. bound in another window manager or as `xss-lock -l -- constellation-lock`. `node install.js --lock-only` installs just the hooks and this command.
 - **Enable or disable layouts**: `constellation-menu` gets a "Choose layouts…" line under Layout, a checklist of every layout where space or enter turns one on or off. The disabled ones are left out of the Layout line and of `next`/`prev` (the key binding, `constellation-layout`), and the list is kept in `~/.cache/claude-constellation/layouts-hidden`. You can still pick a disabled layout by name. The last enabled layout can't be disabled, and disabling the one on screen moves on to the next. In Lua: `cc.set_layout_enabled(name, true|false|"toggle")` and `cc.hidden_layouts()`. Restart Awesome to load it.
 
 ## [0.4.1] - 2026-11-03
