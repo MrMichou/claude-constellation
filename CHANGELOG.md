@@ -6,6 +6,8 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-06
+
 ### Added
 - **Arch Linux installers**: `./install-arch.sh` installs the packages with pacman, runs `install.js` and adds the module to `rc.lua` (`--no-deps`, `--no-rc`, `--restart`, `--uninstall`); `./install-arch-lock.sh` installs only the animated lock screen, for any X11 window manager (#20).
 - **`constellation-lock`**: locks the screen on the animated constellation through xsecurelock without going through Awesome, e.g. bound in another window manager or as `xss-lock -l -- constellation-lock`. `node install.js --lock-only` installs just the hooks and this command (#20).
