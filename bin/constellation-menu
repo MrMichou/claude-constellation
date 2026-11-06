@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Terminal menu for every claude-constellation setting of the running AwesomeWM: the layer on/off,
-// the layout, eco mode, the render backend, Promview (poll now, sign in), Grafana (poll now, token)
-// and the lock screen.
+// the layout, eco mode, the render backend, the Obsidian vault, Promview (poll now, sign in),
+// Grafana (poll now, token) and the lock screen.
 // Usage: constellation-menu
 //
 // Keys: up/down (or k/j) pick a line, left/right (or h/l) change its value, which applies at once
@@ -42,7 +42,10 @@ const BACKEND_HELP = { auto: "the GPU if there is one", gpu: "draw on the X surf
 // --- Awesome --------------------------------------------------------------------------------
 
 // Runs `action` (Lua, may be empty) in Awesome, then answers the state in one round trip.
+// The Obsidian vaults come last, '|'-separated like the other fields.
 const STATE = `
+  local pv, vl = '', {}
+  if cc.obsidian_vaults then pv, vl = cc.obsidian_vaults() end
   local e, eon = cc.eco and cc.eco()
   local b, bnow = cc.backend and cc.backend()
   -- an unknown name leaves the layout alone and returns it (modules without cc.layout)
@@ -50,7 +53,7 @@ const STATE = `
   return table.concat({ l, tostring(cc.is_off and cc.is_off() or false), tostring(e or ''),
     tostring(eon or false), tostring(b or ''), tostring(bnow or ''), table.concat(cc.layouts or {}, ','),
     table.concat(cc.hidden_layouts and cc.hidden_layouts() or {}, ','),
-    tostring(cc.set_layout_enabled ~= nil) }, '|')`;
+    tostring(cc.set_layout_enabled ~= nil), pv, table.concat(vl, '|') }, '|')`;
 
 function awesome(action) {
   const lua = `local ok, cc = pcall(require, 'ui.desktop.claude_constellation')
@@ -63,12 +66,14 @@ function awesome(action) {
   const m = (r.stdout || "").match(/string "(.*)"/);
   if (!m) throw new Error("no answer from awesome-client");
   if (m[1].startsWith("error:")) throw new Error(m[1].slice(7));
-  const [layout, off, eco, ecoOn, backend, backendNow, layouts, hidden, canHide] = m[1].split("|");
+  const [layout, off, eco, ecoOn, backend, backendNow, layouts, hidden, canHide, vault, ...vaults] = m[1].split("|");
   return {
     layout, off: off === "true", eco, ecoOn: ecoOn === "true", backend, backendNow,
     layouts: layouts ? layouts.split(",") : Object.keys(LAYOUT_HELP),
     hidden: hidden ? hidden.split(",") : [],
     canHide: canHide === "true", // false: a module too old for set_layout_enabled
+    vault: vault || "", // "auto", a vault's path, or "" for a module too old to pick one
+    vaults: vaults.filter(Boolean),
   };
 }
 
@@ -112,6 +117,25 @@ let pick = 0; // its line
 // The Layout line steps through the enabled layouts (and the one shown, even if disabled).
 const enabledLayouts = () => state.layouts.filter((l) => !state.hidden.includes(l) || l === state.layout);
 
+// The Obsidian line: "auto" then every vault (and the pinned one, should it no longer be a vault).
+const vaultOptions = () => {
+  if (!state.vault) return ["auto"];
+  const opts = ["auto", ...state.vaults];
+  if (!opts.includes(state.vault)) opts.push(state.vault);
+  return opts;
+};
+const home = os.homedir();
+const tilde = (p) => (p === home || p.startsWith(home + "/") ? "~" + p.slice(home.length) : p);
+const vaultName = (v) => {
+  const n = v === "auto" ? v : path.basename(v);
+  return [...n].length > 14 ? [...n].slice(0, 13).join("") + "…" : n;
+};
+const vaultHint = (v) => {
+  if (!state.vault) return "restart Awesome to pick a vault here";
+  if (v !== "auto") return tilde(v) + (state.vaults.includes(v) ? "" : " (no longer a vault: auto)");
+  return state.vaults.length ? "the vault the sessions touched last" : "no vault: open one in Obsidian or obsidian.conf";
+};
+
 // A choice line steps through `options` with left/right; an action line runs on enter.
 const ROWS = [
   { label: "Display", options: () => ["on", "off"], value: () => (state.off ? "off" : "on"),
@@ -127,6 +151,8 @@ const ROWS = [
   { label: "Rendering", options: () => ["auto", "gpu", "cpu"], value: () => state.backend,
     apply: (v) => `cc.set_backend(${lua(v)})`,
     hint: (v) => BACKEND_HELP[v] + (state.backendNow ? ` (in use: ${state.backendNow})` : "") },
+  { label: "Obsidian", options: vaultOptions, value: () => state.vault || "auto", show: vaultName,
+    apply: (v) => `if cc.set_obsidian_vault then cc.set_obsidian_vault(${lua(v)}) end`, hint: vaultHint },
   { label: "Promview", action: "Poll now",
     hint: () => (conf.url ? conf.url : "no url") + ` · desktop ${conf.desktop}`,
     run: () => { conf = promviewConf(); act("if cc.promview_refresh then cc.promview_refresh() end", "Polled Promview"); } },
@@ -192,7 +218,7 @@ function draw() {
     if (r.options) {
       const opts = r.options(), v = r.value();
       const pos = c("2", pad(opts.length > 2 ? `${opts.indexOf(v) + 1}/${opts.length}` : "", 7));
-      value = pad(`‹ ${v} ›`, 19);
+      value = pad(`‹ ${r.show ? r.show(v) : v} ›`, 19);
       lines.push(`  ${cursor} ${pad(r.label, 12)}${sel ? c("1;38;5;111", value) : value}${pos}${c("2", r.hint(v))}`);
     } else {
       value = pad(r.action, 19);
@@ -217,7 +243,7 @@ function step(dir) {
   if (!r.options) return;
   const opts = r.options();
   const v = opts[(opts.indexOf(r.value()) + dir + opts.length) % opts.length];
-  act(r.apply(v), `${r.label}: ${v}`);
+  act(r.apply(v), `${r.label}: ${r.show ? r.show(v) : v}`);
 }
 
 function screen(on) {

@@ -15,6 +15,10 @@ O.CONF = XDG .. "/claude-constellation/obsidian.conf" -- `vault = <path>`, repea
 O.OBSIDIAN_JSON = XDG .. "/obsidian/obsidian.json" -- Obsidian's own list of vaults
 O.RESCAN = 30 -- seconds between two scans of a vault's files
 O.MAX_NOTES = 3000 -- notes read per vault; a bigger vault shows its first ones
+-- The file holding the vault picked in constellation-menu (render.lua sets it in its cache dir);
+-- absent or empty: "auto", the vault the sessions touched last.
+O.PIN = nil
+O.pin_gen = 0 -- bumped by set_pinned, so the layout picks the change at once
 
 local function trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
 local function strip_slash(p) return (p:gsub("/+$", "")) end
@@ -47,6 +51,36 @@ function O.vaults()
   end)
   for _, v in ipairs(list) do out[#out + 1] = strip_slash(v.path) end
   return out
+end
+
+-- The pinned vault (a path without trailing slash), or nil for "auto".
+function O.pinned()
+  local f = O.PIN and io.open(O.PIN, "r")
+  if not f then return nil end
+  local v = trim(f:read("*l") or "")
+  f:close()
+  if v == "" then return nil end
+  return strip_slash(expand(v))
+end
+
+-- Pin a vault (a path), or go back to "auto" with nil. Returns whether it was written.
+function O.set_pinned(path)
+  if not O.PIN then return false end
+  local f = io.open(O.PIN, "w")
+  if not f then return false end
+  if path then f:write(strip_slash(path), "\n") end
+  f:close()
+  O.pin_gen = O.pin_gen + 1
+  return true
+end
+
+-- The vault to show: the pinned one while it is still a vault, else the one the sessions
+-- touched last, else the first one.
+function O.pick(vaults, last, pinned)
+  if pinned then
+    for _, v in ipairs(vaults) do if v == pinned then return v end end
+  end
+  return last or vaults[1]
 end
 
 -- The vault holding absolute path p, and p relative to it; nil outside every vault.

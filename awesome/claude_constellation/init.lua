@@ -378,6 +378,29 @@ local function set_layout_enabled(name, on)
   return hidden_list()
 end
 
+-- The vault shown by obsi-constellation: a vault's path (one of R.obsidian.vaults()), or "auto"
+-- (nil, "") for the one the sessions touched last. Kept for the next start and for the lock screen.
+-- Returns the choice ("auto" or a path) and the vaults to pick from.
+local function obsidian_vaults()
+  return R.obsidian.pinned() or "auto", R.obsidian.vaults()
+end
+local function set_obsidian_vault(path)
+  local O = R.obsidian
+  if path == nil or path == "" or path == "auto" then
+    O.set_pinned(nil)
+    notify("Obsidian vault: auto (the one touched last)")
+  else
+    path = path:gsub("/+$", "")
+    local known = false
+    for _, v in ipairs(O.vaults()) do if v == path then known = true end end
+    if not known then return obsidian_vaults() end
+    O.set_pinned(path)
+    notify("Obsidian vault: " .. (path:match("([^/]+)$") or path))
+  end
+  redraw()
+  return obsidian_vaults()
+end
+
 -- Pick the render backend: "auto" (the GPU if there is one, else the CPU), "gpu" or "cpu".
 -- Kept for the next start and for the lock screen. Returns the choice and the backend in use.
 local function set_backend(name)
@@ -419,6 +442,8 @@ return {
   layouts = R.LAYOUTS,
   set_layout_enabled = set_layout_enabled,
   hidden_layouts = hidden_list,
+  set_obsidian_vault = set_obsidian_vault,
+  obsidian_vaults = obsidian_vaults,
   set_backend = set_backend,
   backend = function() return backend_choice, backend end,
   lock = lock,

@@ -64,7 +64,7 @@ describe("constellation-menu", () => {
   });
 
   it("polls Promview and Grafana and locks the screen from their lines", async () => {
-    await menu(`6\r8\r${DOWN}${DOWN}\r`);
+    await menu(`7\r9\r${DOWN}${DOWN}\r`);
     const all = calls().join("\n");
     expect(all).toContain("cc.promview_refresh()");
     expect(all).toContain("cc.grafana_refresh()");
@@ -98,6 +98,26 @@ describe("constellation-menu", () => {
   it("doesn't open the checklist with a module too old for it", async () => {
     await menu(`3\r q`);
     expect(calls().join("\n")).not.toContain("cc.set_layout_enabled(");
+  });
+
+  it("steps the Obsidian vault through auto and the vaults Awesome reports", async () => {
+    setAnswer("kanban|false|auto|false|auto|gpu|constellation,lanes|zen|true|auto|/home/me/brain|/home/me/work");
+    await menu(`6${RIGHT}q`);
+    await menu(`6${LEFT}q`);
+    const sets = calls().map((c) => c.match(/cc\.set_obsidian_vault\('([^']+)'\)/)?.[1]).filter(Boolean);
+    expect(sets).toEqual(["/home/me/brain", "/home/me/work"]);
+  });
+
+  it("goes back to auto from a pinned vault", async () => {
+    setAnswer("kanban|false|auto|false|auto|gpu|constellation,lanes|zen|true|/home/me/work|/home/me/brain|/home/me/work");
+    await menu(`6${RIGHT}q`);
+    expect(calls().join("\n")).toContain("cc.set_obsidian_vault('auto')");
+  });
+
+  it("doesn't pick a vault with a module too old for it", async () => {
+    await menu(`6${RIGHT}${RIGHT}q`);
+    const all = calls().join("\n");
+    expect(all).not.toMatch(/set_obsidian_vault\('\//);
   });
 
   it("wraps from the first line to Quit", async () => {
