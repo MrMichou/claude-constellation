@@ -300,13 +300,15 @@ return function(K, cr, w, h, f)
   O = O or K.obsidian
   local area = f.area or { x = 0, y = 0, w = w, h = h }
 
-  if t - vaults.at > (O.RESCAN or 30) then vaults = { at = t, list = O.vaults() } end
+  if t - vaults.at > (O.RESCAN or 30) or vaults.pin_gen ~= O.pin_gen then
+    vaults = { at = t, list = O.vaults(), pinned = O.pinned(), pin_gen = O.pin_gen }
+  end
   if touched_cache.gen ~= f.gen or touched_cache.vaults ~= vaults.list then
     local by_vault, last = O.touched(f.list, vaults.list)
     touched_cache = { gen = f.gen, vaults = vaults.list, by_vault = by_vault, last = last }
   end
   local touched, last = touched_cache.by_vault, touched_cache.last
-  local vault = last or vaults.list[1]
+  local vault = O.pick(vaults.list, last, vaults.pinned)
 
   local hx, hy = area.x + 40, area.y + 46
   if not vault then

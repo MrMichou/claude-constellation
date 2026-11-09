@@ -45,7 +45,7 @@ And one for your second brain:
 
 - **obsi-constellation**: your [Obsidian](https://obsidian.md) vault as its graph view draws it, every note a dot and every `[[link]]` a faint line, settling into place on screen. The notes the sessions read light up in blue, the ones they edit in purple with a ring, both dimming over 30 minutes, with their name and their linked neighbours named. Each session's trail joins the notes it consulted in the order it went through them (the latest step brightest, a comet running along it on each new note), and the sessions sit around the brain, beaming at their latest note. On the lock screen, note names and the vault's name are hidden.
 
-  The vault shown is the one the sessions touched last, else the one open in Obsidian (read from `~/.config/obsidian/obsidian.json`). To pick vaults yourself, list them in `~/.config/claude-constellation/obsidian.conf`:
+  The vault shown is the one the sessions touched last, else the one open in Obsidian (read from `~/.config/obsidian/obsidian.json`). To keep one on screen, pick it on the Obsidian line of [`constellation-menu`](#settings-menu) (`auto` goes back to the one touched last); the choice is kept in `~/.cache/claude-constellation/obsidian-vault` and the lock screen shows it too. From Lua: `cc.set_obsidian_vault("/path/to/vault")` (or `"auto"`). To pick which vaults are offered, list them in `~/.config/claude-constellation/obsidian.conf`:
 
   ```ini
   vault = ~/notes/brain   # repeat the line for more
@@ -61,7 +61,7 @@ Kanban, strip, hud, popup and zen sort sessions by how much they need you: a pen
 constellation-menu
 ```
 
-One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, Promview (poll now, sign in), Grafana (poll now, token) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
+One terminal menu for every setting below: the layer on/off, the layout, eco mode, the render backend, the Obsidian vault, Promview (poll now, sign in), Grafana (poll now, token) and the lock screen. `↑↓` pick a line, `←→` change its value, which applies at once so the wallpaper previews it, `⏎` runs an action, `q` quits.
 
 **Choose layouts…** opens a checklist of every layout: `space` or `⏎` enables or disables the one picked, and `q` goes back. The Layout line and `next`/`prev` (the key binding, `constellation-layout`) skip the disabled layouts, but you can still pick one by name (`constellation-layout zen`). The list is kept in `~/.cache/claude-constellation/layouts-hidden`, one name per line. The last enabled layout can't be disabled, and disabling the one on screen moves on to the next. From Lua: `cc.set_layout_enabled("zen", false)` (or `true`, `"toggle"`).
 
@@ -73,6 +73,7 @@ One terminal menu for every setting below: the layer on/off, the layout, eco mod
                 Choose layouts…           11/14 enabled in the Layout line and next/prev
     Eco mode    ‹ auto ›           1/3    on while on battery (off now)
     Rendering   ‹ auto ›           1/3    the GPU if there is one (in use: gpu)
+    Obsidian    ‹ brain ›          2/3    ~/notes/brain
     Promview    Poll now                  https://promview.example · desktop auto
                 Sign in…                  OIDC sign-in in your browser
     Grafana     Poll now                  https://grafana.example
