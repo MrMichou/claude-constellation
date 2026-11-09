@@ -60,13 +60,14 @@ end
 -- and markdown links to a .md file. Targets as written, without .md.
 function O.parse_links(text)
   local out = {}
-  for target in text:gmatch("%[%[([^%]|#\n]+)") do
-    target = trim(target)
+  -- Lua 5.5 makes loop variables read-only, hence the locals.
+  for raw in text:gmatch("%[%[([^%]|#\n]+)") do
+    local target = trim(raw)
     if target ~= "" then out[#out + 1] = (target:gsub("%.md$", "")) end
   end
-  for target in text:gmatch("%]%(([^)%s]+%.md)%)") do
-    if not target:match("^%a+://") then
-      target = target:gsub("%%20", " "):gsub("^%./", "")
+  for raw in text:gmatch("%]%(([^)%s]+%.md)%)") do
+    if not raw:match("^%a+://") then
+      local target = raw:gsub("%%20", " "):gsub("^%./", "")
       out[#out + 1] = (target:gsub("%.md$", ""))
     end
   end
