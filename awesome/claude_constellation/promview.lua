@@ -152,8 +152,8 @@ function P.parse(body)
   end)
   -- The server's histogram covers every matching alert, not just this page.
   local sc = type(d.severityCounts) == "table" and d.severityCounts or nil
-  for sev, n in pairs(sc or {}) do
-    sev = tostring(sev):lower()
+  for key, n in pairs(sc or {}) do
+    local sev = tostring(key):lower() -- a local: Lua 5.5 makes loop variables read-only
     if not RANK[sev] then sev = "info" end
     out.counts[sev] = out.counts[sev] + (tonumber(n) or 0)
   end
