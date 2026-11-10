@@ -35,6 +35,21 @@ jobs:
           sudo luarocks install luacheck
       - run: luacheck awesome/ spec/ demo/ e2e/
 
+  lua55-syntax:
+    name: Lua 5.5 syntax
+    runs-on: ubuntu-latest
+    # Awesome on Arch is built against Lua 5.5, which rejects code 5.4 accepts
+    # (e.g. assigning to a for-loop variable). Compile every file with it.
+    container: archlinux:latest
+    steps:
+      - name: Install Lua 5.5
+        run: pacman -Syu --noconfirm --needed git lua
+      - uses: actions/checkout@v4
+      - name: Compile every Lua file
+        run: |
+          lua -v
+          find . -name '*.lua' -not -path './node_modules/*' -print0 | xargs -0 -n1 luac -p
+
   lua:
     name: Renderer + saver (Lua 5.4, busted)
     runs-on: ubuntu-latest
