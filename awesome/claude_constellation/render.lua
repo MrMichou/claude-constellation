@@ -46,7 +46,7 @@ local CLAWD = {
   rest = "crab",
 }
 
-local R = { FPS_ACTIVE = 20, FPS_IDLE = 8, FPS_ECO = 1 }
+local R = { FPS_ACTIVE = 12, FPS_IDLE = 8, FPS_ECO = 1 }
 
 -- Where session files, Claude Code's session registry (internal, best-effort), processes,
 -- power supplies, graphics devices and the cache (theme, chosen layout, backend, eco mode and
