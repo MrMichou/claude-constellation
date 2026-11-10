@@ -6,6 +6,8 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-10
+
 ### Changed
 - The constellation now animates at 12 frames a second instead of 20 while a session is working, which roughly halves the CPU Awesome spends drawing it (measured on a 1920x1080 screen: from about 15-28% of a core to about 10%). The idle (8 fps), battery and eco rates are unchanged.
 
