@@ -10,6 +10,7 @@ All notable changes to claude-constellation are documented here. This project fo
 - The constellation now animates at 12 frames a second instead of 20 while a session is working, which roughly halves the CPU Awesome spends drawing it (measured on a 1920x1080 screen: from about 15-28% of a core to about 10%). The idle (8 fps), battery and eco rates are unchanged.
 
 ### Fixed
+- The module loads again under an Awesome built against Lua 5.5 (current `awesome-git` on Arch). Lua 5.5 makes `for` loop variables read-only, so `obsidian.lua` and `promview.lua` no longer compiled and the whole layer silently failed to load; `constellation-menu` then reported "module not loaded". CI now compiles every Lua file with Lua 5.5 too.
 - With the GPU backend, the still part of a layout (the `obsi-constellation` graph, timelines, tiles) no longer shows a stray grey triangle and horizontal streaks, and its faintest links are back. The X server (glamor) rasterized its hundreds of dots and links badly when they were filled and stroked in one go. That part is now drawn on the CPU and uploaded to the X surface once per change, so each frame is still a single copy.
 
 ## [0.5.0] - 2026-11-06
