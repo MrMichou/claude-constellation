@@ -658,15 +658,31 @@ function K.layer(cr, w, h, f, key, draw)
     local bw, bh = math.ceil(w), math.ceil(h)
     if not (layer.surf and layer.backend == backend and layer.w == bw and layer.h == bh) then
       if layer.surf then layer.surf:finish() end
+      if layer.img then layer.img:finish() end
       layer.surf, layer.backend, layer.w, layer.h = offscreen(cr, bw, bh, true), backend, bw, bh
+      -- On the GPU the still part is drawn on the CPU, then uploaded once: X servers (glamor)
+      -- rasterize its hundreds of dots and links, filled and stroked in one go, with stray
+      -- triangles and streaks (and drop the faintest links).
+      layer.img = layer.surf.type ~= "IMAGE" -- lgi names the type (SurfaceType.IMAGE is a number)
+        and cairo.ImageSurface.create(cairo.Format.RGB24, bw, bh) or nil
     end
     layer.id = nil -- until drawn whole
-    local lc = cairo.Context(layer.surf)
+    local lc = cairo.Context(layer.img or layer.surf)
     set(lc, C.bg); lc:paint()
-    local was = bold
+    local was, was_backend = bold, backend
     bold = nil; K.bold(lc, false) -- a fresh context starts with the default font
-    draw(lc)
+    if layer.img then backend = "cpu" end -- glows and sprites cached for an image target
+    local drawn, err = pcall(draw, lc)
+    backend = was_backend
     bold = nil; K.bold(cr, was)
+    if not drawn then error(err, 0) end
+    if layer.img then
+      layer.img:flush()
+      local uc = cairo.Context(layer.surf)
+      uc:set_operator(cairo.Operator.SOURCE)
+      uc:set_source_surface(layer.img, 0, 0)
+      uc:paint()
+    end
     layer.surf:flush()
     layer.id, layer.C = id, C
   end
@@ -1198,7 +1214,8 @@ function R.draw(cr, w, h, opts)
   layout(K, cr, w, h, f)
   if not layer.used and layer.surf then -- a full-screen surface: freed once unused
     layer.surf:finish()
-    layer.surf, layer.id = nil, nil
+    if layer.img then layer.img:finish() end
+    layer.surf, layer.img, layer.id = nil, nil, nil
   end
   if cr ~= out then
     cpu_buf:flush()

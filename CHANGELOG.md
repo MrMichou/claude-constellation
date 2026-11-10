@@ -6,6 +6,9 @@ All notable changes to claude-constellation are documented here. This project fo
 
 ## [Unreleased]
 
+### Fixed
+- With the GPU backend, the still part of a layout (the `obsi-constellation` graph, timelines, tiles) no longer shows a stray grey triangle and horizontal streaks, and its faintest links are back. The X server (glamor) rasterized its hundreds of dots and links badly when they were filled and stroked in one go. That part is now drawn on the CPU and uploaded to the X surface once per change, so each frame is still a single copy.
+
 ## [0.5.0] - 2026-11-06
 
 ### Added
